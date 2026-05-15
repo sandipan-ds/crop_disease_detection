@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────
+# Training Configuration
+# ─────────────────────────────────────────────
+
+# Data
+data:
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+# Model
+model:
+  architecture: "custom_cnn"        # Options: custom_cnn, resnet50, efficientnet_b0, mobilenet_v2
+  num_classes: 38                   # PlantVillage has 38 classes
+  pretrained: true                  # Only for transfer learning models
+  freeze_base: true                 # Freeze pre-trained backbone layers
+
+# Training
+training:
+  epochs: 50
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adam"                 # Options: adam, sgd, adamw
+  scheduler: "cosine_annealing"    # Options: step_lr, cosine_annealing, reduce_on_plateau
+  early_stopping_patience: 7
+
+# Augmentation
+augmentation:
+  horizontal_flip: true
+  vertical_flip: false
+  rotation_degrees: 30
+  color_jitter: true
+  random_crop: true
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+
+# Vertex AI
+vertex_ai:
+  project_id: "your-gcp-project-id"
+  region: "us-central1"
+  staging_bucket: "gs://your-bucket-name/staging"
+  gcs_data_path: "gs://your-bucket-name/data/plantvillage"
+  gcs_model_output: "gs://your-bucket-name/models"
+  machine_type: "n1-standard-8"
+  accelerator_type: "NVIDIA_TESLA_T4"
+  accelerator_count: 1
+  container_image_uri: "us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-1.py310:latest"

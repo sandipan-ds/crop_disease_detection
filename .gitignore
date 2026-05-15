@@ -1,0 +1,38 @@
+# ─── Data (too large for git) ───
+business_objective/
+data/
+
+# ─── Model weights ───
+models/saved/*.pth
+models/saved/*.pt
+models/saved/*.onnx
+!models/saved/.gitkeep
+
+# ─── Python ───
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# ─── IDE ───
+.vscode/
+.idea/
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+
+# ─── Jupyter ───
+.ipynb_checkpoints/
+
+# ─── Logs & Reports ───
+*.log
+reports/*.png
+reports/*.html
+!reports/.gitkeep
+
+# ─── GCP credentials (never commit) ───
+*.json
+!configs/*.json
