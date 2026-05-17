@@ -1,3 +1,6 @@
+# ─── Environment / Secrets (NEVER commit) ───
+.env
+
 # ─── Data (too large for git) ───
 business_objective/
 data/
@@ -33,6 +36,12 @@ reports/*.png
 reports/*.html
 !reports/.gitkeep
 
-# ─── GCP credentials (never commit) ───
-*.json
-!configs/*.json
+# ─── GCP credentials (NEVER commit) ───
+scripts/*.json
+
+# ─── Large CSVs (generated, not source) ───
+notebook/train.csv
+notebook/test.csv
+
+# ─── Temp files from label encoding cell ───
+notebook/label_encoding_cell.py
