@@ -45,3 +45,12 @@ notebook/test.csv
 
 # ─── Temp files from label encoding cell ───
 notebook/label_encoding_cell.py
+
+# ─── TensorBoard logs ───
+runs/
+
+# ─── Jupyter checkpoints ───
+.ipynb_checkpoints/
+
+# ─── Models ───
+models/
