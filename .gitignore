@@ -54,3 +54,7 @@ runs/
 
 # ─── Models ───
 models/
+
+# ─── GCS Service Key ───
+gcs_service_key/
+

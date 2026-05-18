@@ -21,7 +21,12 @@ load_dotenv(PROJECT_ROOT / ".env")
 PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 LOCATION = os.getenv("GCS_LOCATION", "asia")
-SERVICE_ACCOUNT_KEY = PROJECT_ROOT / os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+
+# Resolve service account key path (relative → absolute)
+cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+if cred_path and not os.path.isabs(cred_path):
+    cred_path = str(PROJECT_ROOT / cred_path)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_path
 
 # What to upload  (local_path, gcs_prefix)
 UPLOAD_DIRS = [
@@ -41,8 +46,7 @@ UPLOAD_FILES = [
 # =========================================================
 
 def get_client():
-    """Authenticate and return a storage client."""
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(SERVICE_ACCOUNT_KEY)
+    """Authenticate and return a storage client (uses ADC)."""
     client = storage.Client(project=PROJECT_ID)
     return client
 
@@ -92,10 +96,8 @@ def main():
     print("  GCS UPLOAD SCRIPT")
     print("=" * 60)
 
-    # Authenticate
-    print(f"\nProject:         {PROJECT_ID}")
+    print(f"Project:         {PROJECT_ID}")
     print(f"Bucket:          gs://{BUCKET_NAME}/")
-    print(f"Service Account: {SERVICE_ACCOUNT_KEY.name}")
 
     client = get_client()
     bucket = get_or_create_bucket(client)
