@@ -25,6 +25,12 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
+# Resolve service account key path (relative → absolute)
+cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+if cred_path and not os.path.isabs(cred_path):
+    cred_path = str(PROJECT_ROOT / cred_path)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_path
+
 from google.cloud import aiplatform
 
 
@@ -35,7 +41,6 @@ from google.cloud import aiplatform
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "crop-disease-detection-496608")
 BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "crop-disease-detection-1")
 REGION = os.getenv("GCP_REGION", "asia-south1")  # Mumbai (closest to India)
-SERVICE_ACCOUNT_KEY = PROJECT_ROOT / os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 
 # Pre-built PyTorch containers from Google
 # See: https://cloud.google.com/vertex-ai/docs/training/pre-built-containers
@@ -89,9 +94,6 @@ def main():
     if args.dry_run:
         print("\n  [DRY RUN] Job not submitted.")
         return
-
-    # --- Authenticate ---
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(SERVICE_ACCOUNT_KEY)
 
     # --- Initialize Vertex AI ---
     aiplatform.init(
