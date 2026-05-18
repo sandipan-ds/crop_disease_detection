@@ -33,14 +33,22 @@ class CropDiseaseDataset(Dataset):
 
         # Load CSV
         self.df = pd.read_csv(csv_path)
+        self.df.columns = self.df.columns.str.strip()
 
-        # Optional: subsample for local testing
+        if "label" in self.df.columns and pd.api.types.is_integer_dtype(self.df["label"]):
+            pass
+        else:
+            from sklearn.preprocessing import LabelEncoder
+            le = LabelEncoder()
+            self.df["label"] = le.fit_transform(self.df["target"])
+
+        # Optional: subsample for local testing (stratified by class)
         if sample_n is not None and sample_n < len(self.df):
+            per_class = max(1, sample_n // self.df["label"].nunique())
             self.df = (
                 self.df
-                .groupby("label", group_keys=False)
-                .apply(lambda x: x.sample(min(len(x), max(1, sample_n // self.df["label"].nunique())),
-                                          random_state=42))
+                .groupby("label")
+                .sample(n=per_class, random_state=42)
                 .reset_index(drop=True)
             )
 
