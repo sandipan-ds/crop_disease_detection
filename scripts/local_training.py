@@ -2,8 +2,8 @@
 Local training script for crop disease detection (CNN baseline).
 
 Runs on your local GPU (RTX 2060) with a subset of data for quick testing.
-- Train + 5-fold CV on ~5,000 images
-- Test evaluation on ~1,000 images
+- Train + 5-fold CV on ~500 images
+- Test evaluation on ~200 images
 - TensorBoard logs saved to runs/local/
 
 Usage:
@@ -33,8 +33,8 @@ CONFIG = {
     "train_csv": str(PROJECT_ROOT / "notebook" / "train.csv"),
     "test_csv":  str(PROJECT_ROOT / "notebook" / "test.csv"),
     "data_root": str(PROJECT_ROOT),
-    "train_subset": 5000,       # sample 5K for local testing
-    "test_subset":  1000,       # sample 1K for local testing
+    "train_subset": 1000,      # sample 1000 for local testing
+    "test_subset":  600,      # sample 600 for local testing
 
     # Model
     "num_classes": 102,
@@ -48,10 +48,18 @@ CONFIG = {
     "learning_rate": 1e-3,
     "weight_decay": 1e-4,
     "min_lr": 1e-6,
-    "n_folds": 5,
+    "n_folds": 3,               # reduce to 2-3 for small test runs (needs >n_folds samples per class)
+
+    # LR scheduling — ReduceLROnPlateau (set False to use CosineAnnealingLR)
+    "use_reduce_lr_on_plateau": True,
+    "lr_factor": 0.5,
+    "lr_patience": 3,
+
+    # Early stopping — 0 disables it
+    "early_stop_patience": 5,
 
     # DataLoader
-    "num_workers": 4,
+    "num_workers": 2,           # workers only do I/O (GPU handles transforms)
 
     # Augmentation
     "min_aug": 0,
@@ -74,9 +82,9 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cuda":
         print(f"\n  GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        print(f"  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
     else:
-        print("\n  ⚠ No GPU detected — training on CPU (will be slow)")
+        print("\n  WARNING: No GPU detected - training on CPU (will be slow)")
 
     # --- Transforms ---
     train_transform = get_train_transforms(
@@ -94,13 +102,11 @@ def main():
     train_dataset = CropDiseaseDataset(
         csv_path=CONFIG["train_csv"],
         data_root=CONFIG["data_root"],
-        transform=train_transform,
         sample_n=CONFIG["train_subset"],
     )
     test_dataset = CropDiseaseDataset(
         csv_path=CONFIG["test_csv"],
         data_root=CONFIG["data_root"],
-        transform=eval_transform,
         sample_n=CONFIG["test_subset"],
     )
 

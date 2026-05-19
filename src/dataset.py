@@ -9,6 +9,7 @@ import pandas as pd
 from pathlib import Path
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms.functional import to_tensor
 
 
 class CropDiseaseDataset(Dataset):
@@ -23,26 +24,32 @@ class CropDiseaseDataset(Dataset):
     Args:
         csv_path:      path to train.csv or test.csv
         data_root:     root directory that image_path is relative to
-        transform:     torchvision transform to apply
         sample_n:      if set, randomly sample N rows (for local testing)
     """
 
-    def __init__(self, csv_path, data_root, transform=None, sample_n=None):
+    def __init__(self, csv_path, data_root, sample_n=None):
         self.data_root = Path(data_root)
-        self.transform = transform
 
         # Load CSV
         self.df = pd.read_csv(csv_path)
+        self.df.columns = self.df.columns.str.strip()
 
-        # Optional: subsample for local testing
+        if "label" in self.df.columns and pd.api.types.is_integer_dtype(self.df["label"]):
+            pass
+        else:
+            from sklearn.preprocessing import LabelEncoder
+            le = LabelEncoder()
+            self.df["label"] = le.fit_transform(self.df["target"])
+
+        # Optional: subsample for local testing (stratified by class)
         if sample_n is not None and sample_n < len(self.df):
-            self.df = (
-                self.df
-                .groupby("label", group_keys=False)
-                .apply(lambda x: x.sample(min(len(x), max(1, sample_n // self.df["label"].nunique())),
-                                          random_state=42))
-                .reset_index(drop=True)
-            )
+            per_class = max(1, sample_n // self.df["label"].nunique())
+            sampled = []
+            for label_val in self.df["label"].unique():
+                class_df = self.df[self.df["label"] == label_val]
+                n = min(len(class_df), per_class)
+                sampled.append(class_df.sample(n=n, random_state=42))
+            self.df = pd.concat(sampled, ignore_index=True)
 
         self.image_paths = self.df["image_path"].values
         self.labels = self.df["label"].values
@@ -57,12 +64,10 @@ class CropDiseaseDataset(Dataset):
         img_path = self.data_root / self.image_paths[idx]
         label = self.labels[idx]
 
-        # Load image
+        # Load image → fixed-size float32 tensor (GPU transforms applied later)
         image = Image.open(img_path).convert("RGB")
-
-        # Apply transforms
-        if self.transform:
-            image = self.transform(image)
+        image = image.resize((256, 256), Image.BILINEAR)
+        image = to_tensor(image)
 
         return image, label
 

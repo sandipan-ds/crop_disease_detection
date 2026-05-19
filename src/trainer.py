@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import (
@@ -148,14 +148,26 @@ class Trainer:
         )
 
     def _build_scheduler(self, optimizer):
-        """Build learning rate scheduler."""
+        """Build learning rate scheduler.
+        
+        Uses ReduceLROnPlateau when config["use_reduce_lr_on_plateau"] is True,
+        otherwise falls back to CosineAnnealingLR.
+        """
+        if self.config.get("use_reduce_lr_on_plateau", False):
+            return ReduceLROnPlateau(
+                optimizer,
+                mode="max",
+                factor=self.config.get("lr_factor", 0.5),
+                patience=self.config.get("lr_patience", 3),
+                min_lr=self.config.get("min_lr", 1e-6),
+            )
         return CosineAnnealingLR(
             optimizer,
             T_max=self.config["epochs"],
             eta_min=self.config.get("min_lr", 1e-6),
         )
 
-    def _train_one_epoch(self, model, dataloader, optimizer, criterion, epoch, writer, fold):
+    def _train_one_epoch(self, model, dataloader, optimizer, criterion, epoch, writer, fold, transform=None):
         """Train for one epoch. Returns average loss and accuracy."""
         model.train()
         running_loss = 0.0
@@ -165,8 +177,10 @@ class Trainer:
         pbar = tqdm(dataloader, desc=f"  Fold {fold} | Epoch {epoch+1} [TRAIN]", leave=False)
 
         for batch_idx, (images, labels) in enumerate(pbar):
-            images = images.to(self.device)
-            labels = labels.to(self.device)
+            images = images.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True)
+            if transform is not None:
+                images = transform(images)
 
             # Forward pass
             outputs = model(images)
@@ -199,7 +213,7 @@ class Trainer:
         return avg_loss, accuracy
 
     @torch.no_grad()
-    def _validate(self, model, dataloader, criterion, epoch, fold):
+    def _validate(self, model, dataloader, criterion, epoch, fold, transform=None):
         """Validate model. Returns loss, accuracy, all targets, all predictions."""
         model.eval()
         running_loss = 0.0
@@ -209,8 +223,10 @@ class Trainer:
         pbar = tqdm(dataloader, desc=f"  Fold {fold} | Epoch {epoch+1} [VAL]  ", leave=False)
 
         for images, labels in pbar:
-            images = images.to(self.device)
-            labels = labels.to(self.device)
+            images = images.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True)
+            if transform is not None:
+                images = transform(images)
 
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -238,16 +254,13 @@ class Trainer:
         print(f"  Train samples: {len(train_dataset)}")
         print(f"  Val samples:   {len(val_dataset)}")
 
-        # Apply transforms
-        train_dataset.dataset.transform = train_transform
-        val_dataset.dataset.transform = eval_transform
-
         # DataLoaders
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config["batch_size"],
             shuffle=True,
             num_workers=self.config.get("num_workers", 4),
+            prefetch_factor=2,
             pin_memory=True,
             drop_last=True,
         )
@@ -265,6 +278,10 @@ class Trainer:
         scheduler = self._build_scheduler(optimizer)
         criterion = nn.CrossEntropyLoss()
 
+        # Move GPU augmentation pipelines to device
+        gpu_train_transform = train_transform.to(self.device)
+        gpu_eval_transform = eval_transform.to(self.device)
+
         # TensorBoard writer for this fold
         writer = SummaryWriter(log_dir=f"{self.log_dir}/fold_{fold}")
 
@@ -273,24 +290,30 @@ class Trainer:
 
         best_val_f1 = 0.0
         best_metrics = {}
+        early_stop_counter = 0
 
         for epoch in range(self.config["epochs"]):
             start_time = time.time()
 
             # --- Train ---
             train_loss, train_acc = self._train_one_epoch(
-                model, train_loader, optimizer, criterion, epoch, writer, fold
+                model, train_loader, optimizer, criterion, epoch, writer, fold,
+                transform=gpu_train_transform,
             )
 
             # --- Validate ---
             val_loss, val_targets, val_preds = self._validate(
-                model, val_loader, criterion, epoch, fold
+                model, val_loader, criterion, epoch, fold,
+                transform=gpu_eval_transform,
             )
             val_metrics = compute_metrics(val_targets, val_preds)
 
             # --- Learning rate step ---
             current_lr = optimizer.param_groups[0]["lr"]
-            scheduler.step()
+            if isinstance(scheduler, ReduceLROnPlateau):
+                scheduler.step(val_metrics["f1_macro"])
+            else:
+                scheduler.step()
 
             elapsed = time.time() - start_time
 
@@ -334,7 +357,16 @@ class Trainer:
                     "val_metrics": best_metrics,
                     "config": self.config,
                 }, save_path)
-                print(f"  ★ New best model saved (F1: {best_val_f1:.4f})")
+                print(f"  * New best model saved (F1: {best_val_f1:.4f})")
+
+                # Reset early stopping counter on improvement
+                early_stop_counter = 0
+            else:
+                early_stop_counter += 1
+                early_stop_patience = self.config.get("early_stop_patience", 0)
+                if early_stop_patience > 0 and early_stop_counter >= early_stop_patience:
+                    print(f"  [STOP] Early stopping triggered (no improvement for {early_stop_patience} epochs)")
+                    break
 
         # --- Log confusion matrix for best epoch ---
         fig = plot_confusion_matrix(val_targets, val_preds, self.class_names, f"Fold {fold} - Confusion Matrix")
@@ -433,8 +465,7 @@ class Trainer:
         model = self.model_fn().to(self.device)
         model.load_state_dict(checkpoint["model_state_dict"])
 
-        # Apply eval transforms
-        test_dataset.transform = eval_transform
+        gpu_eval_transform = eval_transform.to(self.device)
 
         test_loader = DataLoader(
             test_dataset,
@@ -447,7 +478,8 @@ class Trainer:
         # Evaluate
         criterion = nn.CrossEntropyLoss()
         test_loss, test_targets, test_preds = self._validate(
-            model, test_loader, criterion, epoch=0, fold="test"
+            model, test_loader, criterion, epoch=0, fold="test",
+            transform=gpu_eval_transform,
         )
         test_metrics = compute_metrics(test_targets, test_preds)
 
