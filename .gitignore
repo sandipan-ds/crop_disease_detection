@@ -36,6 +36,26 @@ reports/*.png
 reports/*.html
 !reports/.gitkeep
 
+# ─── Training artifacts (TensorBoard, logs, checkpoints) ───
+runs/
+
+# ─── Binary / serialized ML artifacts (cache, weights, datasets) ───
+*.pkl
+*.pickle
+*.joblib
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.ckpt
+*.bin
+
+# ─── Editor temp / backup files ───
+*.swp
+*.swo
+*~
+*.bak
+
 # ─── GCP credentials (NEVER commit) ───
 scripts/*.json
 
