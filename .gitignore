@@ -69,3 +69,6 @@ notebook/label_encoding_cell.py
 # ─── GCS Service Account Key (NEVER commit) ───
 gcs_service_key/
 
+# Project Documentation
+project_document/
+
