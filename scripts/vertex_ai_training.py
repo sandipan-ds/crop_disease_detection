@@ -139,7 +139,9 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cuda":
         print(f"\n  GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        dprops = torch.cuda.get_device_properties(0)
+vram_gb = getattr(dprops, "total_memory", getattr(dprops, "total_mem", 0)) / 1e9
+print(f"  VRAM: {vram_gb:.1f} GB")
     else:
         print("\n  WARNING: No GPU detected — training on CPU")
 
