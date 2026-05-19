@@ -1,8 +1,9 @@
 # ─── Environment / Secrets (NEVER commit) ───
 .env
 
-# ─── Data (too large for git) ───
+# ─── Data & project docs (too large / unnecessary for git) ───
 business_objective/
+project_document/
 data/
 
 # ─── Model weights ───
