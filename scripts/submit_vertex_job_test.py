@@ -11,6 +11,10 @@ Usage:
 
 import os
 import sys
+import shutil
+import subprocess
+import tempfile
+import textwrap
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -23,12 +27,12 @@ if cred_path and not os.path.isabs(cred_path):
     cred_path = str(PROJECT_ROOT / cred_path)
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = cred_path
 
-from google.cloud import aiplatform
+from google.cloud import aiplatform, storage
 
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "crop-disease-detection-496608")
 BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "crop-disease-detection-1")
-REGION = os.getenv("GCP_REGION", "asia-south1")
+REGION = os.getenv("GCP_REGION", "us-central1")
 
 
 def container_uri(region):
@@ -46,6 +50,92 @@ TENSORBOARD_ASIA = "projects/1049249498032/locations/asia-south1/tensorboards/45
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+
+# ─────────────────────────────────────────────────────────────
+#  Package builder: bundles training script + src/ modules
+# ─────────────────────────────────────────────────────────────
+
+def _build_and_upload_package(project_root, bucket_name):
+    """
+    Build a Python source distribution containing:
+      - trainer/task.py  (vertex_ai_training_test.py)
+      - src/             (dataset, model, trainer, augmentations)
+
+    Uploads the sdist .tar.gz to GCS and returns the gs:// URI.
+    """
+    tmpdir_path = tempfile.mkdtemp(prefix="vertex_pkg_")
+    try:
+        tmpdir = Path(tmpdir_path)
+
+        # ── trainer/ package (wraps the training script) ──
+        trainer_dir = tmpdir / "trainer"
+        trainer_dir.mkdir()
+        (trainer_dir / "__init__.py").write_text("")
+        shutil.copy2(
+            project_root / "scripts" / "vertex_ai_training_test.py",
+            trainer_dir / "task.py",
+        )
+
+        # ── src/ package (only the modules the script imports) ──
+        src_dir = tmpdir / "src"
+        src_dir.mkdir()
+        shutil.copy2(project_root / "src" / "__init__.py", src_dir / "__init__.py")
+        for module in ["dataset.py", "model.py", "trainer.py", "augmentations.py"]:
+            shutil.copy2(project_root / "src" / module, src_dir / module)
+
+        # ── setup.py ──
+        (tmpdir / "setup.py").write_text(textwrap.dedent("""\
+            from setuptools import setup, find_packages
+            setup(
+                name="crop-disease-trainer",
+                version="0.1.0",
+                packages=find_packages(),
+                install_requires=[
+                    "scikit-learn>=1.3.0",
+                    "seaborn>=0.12.0",
+                    "tqdm>=4.65.0",
+                    "google-cloud-storage>=2.10.0",
+                    "Pillow>=10.0.0",
+                    "tensorboard>=2.13.0",
+                    "python-json-logger>=2.0.0",
+                    "pandas>=2.0.0",
+                    "psutil>=5.9.0",
+                ],
+            )
+        """))
+
+        # ── Build sdist ──
+        print("  Building source distribution...")
+        result = subprocess.run(
+            [sys.executable, "setup.py", "sdist", "--formats=gztar"],
+            cwd=str(tmpdir),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"  [ERROR] sdist build failed:\n{result.stderr}")
+            raise RuntimeError("Failed to build source distribution")
+
+        sdist_path = next((tmpdir / "dist").glob("*.tar.gz"))
+
+        # ── Upload to GCS ──
+        gcs_key = f"packages/{sdist_path.name}"
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(gcs_key)
+        blob.upload_from_filename(str(sdist_path))
+
+        gcs_uri = f"gs://{bucket_name}/{gcs_key}"
+        print(f"  Package uploaded → {gcs_uri}")
+        return gcs_uri
+
+    finally:
+        shutil.rmtree(tmpdir_path, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────
+#  Main
+# ─────────────────────────────────────────────────────────────
 
 def main():
     import argparse
@@ -77,11 +167,15 @@ def main():
     print(f"  Learning rate:  {args.lr}")
     print(f"  GCS bucket:     gs://{BUCKET_NAME}/")
     print(f"  TensorBoard:    {'enabled' if tensorboard else 'N/A (use asia-south1)'}")
-    print(f"  Script:         vertex_ai_training_test.py")
+    print(f"  Script:         vertex_ai_training_test.py (packaged as trainer.task)")
 
     if args.dry_run:
         print("\n  [DRY RUN] Job not submitted.")
         return
+
+    # ── Build & upload Python package with src/ modules ──
+    print("\n  Packaging training script + src/ modules...")
+    package_uri = _build_and_upload_package(PROJECT_ROOT, BUCKET_NAME)
 
     aiplatform.init(
         project=PROJECT_ID,
@@ -89,17 +183,18 @@ def main():
         staging_bucket=f"gs://{BUCKET_NAME}",
     )
 
-    job = aiplatform.CustomJob.from_local_script(
+    # ── CustomPythonPackageTrainingJob (bundles src/ with the script) ──
+    job = aiplatform.CustomPythonPackageTrainingJob(
         display_name=job_name,
-        script_path=str(PROJECT_ROOT / "scripts" / "vertex_ai_training_test.py"),
+        python_package_gcs_uri=package_uri,
+        python_module_name="trainer.task",
         container_uri=image,
-        requirements=[
-            "scikit-learn>=1.3.0",
-            "seaborn>=0.12.0",
-            "tqdm>=4.65.0",
-            "google-cloud-storage>=2.10.0",
-            "Pillow>=10.0.0",
-        ],
+    )
+
+    print(f"\n  Submitting job: {job_name}")
+    print("  This may take 5-10 minutes to provision...")
+
+    job.run(
         args=[
             "--epochs", str(args.epochs),
             "--batch-size", str(args.batch_size),
@@ -112,12 +207,6 @@ def main():
         accelerator_type=gpu_config["gpu"],
         accelerator_count=gpu_config["count"],
         base_output_dir=f"gs://{BUCKET_NAME}/results/{job_name}",
-    )
-
-    print(f"\n  Submitting job: {job_name}")
-    print("  This may take 5-10 minutes to provision...")
-
-    job.run(
         service_account=f"crop-disease-detection@{PROJECT_ID}.iam.gserviceaccount.com",
         tensorboard=tensorboard,
         sync=True,

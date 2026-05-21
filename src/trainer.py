@@ -11,6 +11,7 @@ Features:
 
 import time
 import json
+import gc
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend for saving figures
@@ -34,6 +35,12 @@ from sklearn.metrics import (
 )
 
 from tqdm import tqdm
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 
 # =========================================================
@@ -168,11 +175,16 @@ class Trainer:
         )
 
     def _train_one_epoch(self, model, dataloader, optimizer, criterion, epoch, writer, fold, transform=None):
-        """Train for one epoch. Returns average loss and accuracy."""
+        """Train for one epoch. Returns average loss, all targets, and all predictions."""
         model.train()
         running_loss = 0.0
         correct = 0
         total = 0
+        # Pre-allocate lists with estimated capacity
+        num_samples = len(dataloader.dataset)
+        all_targets = np.empty(num_samples, dtype=np.int64)
+        all_predictions = np.empty(num_samples, dtype=np.int64)
+        idx_offset = 0
 
         pbar = tqdm(dataloader, desc=f"  Fold {fold} | Epoch {epoch+1} [TRAIN]", leave=False)
 
@@ -192,25 +204,30 @@ class Trainer:
             optimizer.step()
 
             # Track metrics
-            running_loss += loss.item() * images.size(0)
+            batch_size = labels.size(0)
+            running_loss += loss.item() * batch_size
             _, predicted = outputs.max(1)
-            total += labels.size(0)
+            total += batch_size
             correct += predicted.eq(labels).sum().item()
 
-            # Update progress bar
-            pbar.set_postfix({
-                "loss": f"{loss.item():.4f}",
-                "acc": f"{100. * correct / total:.1f}%",
-            })
+            # Store predictions efficiently (no Python list overhead)
+            labels_np = labels.cpu().numpy()
+            preds_np = predicted.cpu().numpy()
+            all_targets[idx_offset:idx_offset + batch_size] = labels_np
+            all_predictions[idx_offset:idx_offset + batch_size] = preds_np
+            idx_offset += batch_size
 
-            # Log step-level loss
-            global_step = epoch * len(dataloader) + batch_idx
-            writer.add_scalar(f"fold_{fold}/step_loss/train", loss.item(), global_step)
+            # Update progress bar (every 10 batches to reduce log spam)
+            if batch_idx % 10 == 0:
+                pbar.set_postfix({
+                    "loss": f"{loss.item():.4f}",
+                    "acc": f"{100. * correct / total:.1f}%",
+                })
 
         avg_loss = running_loss / total
-        accuracy = correct / total
 
-        return avg_loss, accuracy
+        # Trim to actual size (drop_last=True may reduce count)
+        return avg_loss, all_targets[:idx_offset], all_predictions[:idx_offset]
 
     @torch.no_grad()
     def _validate(self, model, dataloader, criterion, epoch, fold, transform=None):
@@ -259,17 +276,20 @@ class Trainer:
             train_dataset,
             batch_size=self.config["batch_size"],
             shuffle=True,
-            num_workers=self.config.get("num_workers", 4),
-            prefetch_factor=2,
+            num_workers=self.config.get("num_workers", 2),
+            prefetch_factor=2 if self.config.get("num_workers", 2) > 0 else None,
             pin_memory=True,
             drop_last=True,
+            persistent_workers=False,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.config["batch_size"],
             shuffle=False,
-            num_workers=self.config.get("num_workers", 4),
+            num_workers=self.config.get("num_workers", 2),
+            prefetch_factor=2 if self.config.get("num_workers", 2) > 0 else None,
             pin_memory=True,
+            persistent_workers=False,
         )
 
         # Fresh model for each fold
@@ -291,15 +311,44 @@ class Trainer:
         best_val_f1 = 0.0
         best_metrics = {}
         early_stop_counter = 0
+        start_epoch = 0
 
-        for epoch in range(self.config["epochs"]):
+        # --- Resume from checkpoint if available ---
+        checkpoint_path = Path(self.save_dir) / f"checkpoint_fold_{fold}.pth"
+        if checkpoint_path.exists():
+            print(f"  [RESUME] Found checkpoint: {checkpoint_path}")
+            ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            model.load_state_dict(ckpt["model_state_dict"])
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            if "scheduler_state_dict" in ckpt:
+                scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+            start_epoch = ckpt["epoch"]
+            best_val_f1 = ckpt.get("best_val_f1", 0.0)
+            best_metrics = ckpt.get("best_metrics", {})
+            early_stop_counter = ckpt.get("early_stop_counter", 0)
+            print(f"  [RESUME] Resuming from epoch {start_epoch + 1}, best F1: {best_val_f1:.4f}")
+
+        for epoch in range(start_epoch, self.config["epochs"]):
             start_time = time.time()
 
+            # Memory monitoring
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if HAS_PSUTIL:
+                mem = psutil.virtual_memory()
+                gpu_mem = torch.cuda.memory_allocated() / 1e9 if torch.cuda.is_available() else 0
+                print(f"  [MEM] RAM: {mem.used/1e9:.1f}/{mem.total/1e9:.1f} GB ({mem.percent}%) | "
+                      f"GPU: {gpu_mem:.2f} GB allocated")
+                if mem.percent > 90:
+                    print("  [WARNING] RAM usage above 90%! Risk of OOM kill.")
+
             # --- Train ---
-            train_loss, train_acc = self._train_one_epoch(
+            train_loss, train_targets, train_preds = self._train_one_epoch(
                 model, train_loader, optimizer, criterion, epoch, writer, fold,
                 transform=gpu_train_transform,
             )
+            train_metrics = compute_metrics(train_targets, train_preds)
 
             # --- Validate ---
             val_loss, val_targets, val_preds = self._validate(
@@ -320,24 +369,47 @@ class Trainer:
             # --- Log to TensorBoard ---
             writer.add_scalar(f"loss/train", train_loss, epoch)
             writer.add_scalar(f"loss/val", val_loss, epoch)
-            writer.add_scalar(f"accuracy/train", train_acc, epoch)
-            writer.add_scalar(f"accuracy/val", val_metrics["accuracy"], epoch)
             writer.add_scalar(f"learning_rate", current_lr, epoch)
             writer.add_scalar(f"weight_decay", self.config["weight_decay"], epoch)
 
-            # Log all metric variants
+            # Log all train metrics
+            for metric_name, metric_value in train_metrics.items():
+                writer.add_scalar(f"train/{metric_name}", metric_value, epoch)
+
+            # Log all val metrics
             for metric_name, metric_value in val_metrics.items():
-                writer.add_scalar(f"metrics/{metric_name}", metric_value, epoch)
+                writer.add_scalar(f"val/{metric_name}", metric_value, epoch)
 
             # --- Print epoch summary ---
+            print(f"\n  {'─'*90}")
             print(
                 f"  Epoch {epoch+1:>3}/{self.config['epochs']} | "
-                f"Train Loss: {train_loss:.4f} | "
-                f"Val Loss: {val_loss:.4f} | "
-                f"Val Acc: {val_metrics['accuracy']:.4f} | "
-                f"Val F1(macro): {val_metrics['f1_macro']:.4f} | "
-                f"LR: {current_lr:.6f} | "
-                f"Time: {elapsed:.1f}s"
+                f"LR: {current_lr:.6f} | Time: {elapsed:.1f}s"
+            )
+            print(f"  {'─'*90}")
+            print(
+                f"  TRAIN │ Loss: {train_loss:.4f} │ "
+                f"Acc: {train_metrics['accuracy']:.4f} │ "
+                f"P(m): {train_metrics['precision_macro']:.4f}  P(w): {train_metrics['precision_weighted']:.4f} │ "
+                f"R(m): {train_metrics['recall_macro']:.4f}  R(w): {train_metrics['recall_weighted']:.4f}"
+            )
+            print(
+                f"        │                │ "
+                f"F1(macro): {train_metrics['f1_macro']:.4f} │ "
+                f"F1(weighted): {train_metrics['f1_weighted']:.4f} │ "
+                f"F1(micro): {train_metrics['f1_micro']:.4f}"
+            )
+            print(
+                f"  VAL   │ Loss: {val_loss:.4f} │ "
+                f"Acc: {val_metrics['accuracy']:.4f} │ "
+                f"P(m): {val_metrics['precision_macro']:.4f}  P(w): {val_metrics['precision_weighted']:.4f} │ "
+                f"R(m): {val_metrics['recall_macro']:.4f}  R(w): {val_metrics['recall_weighted']:.4f}"
+            )
+            print(
+                f"        │                │ "
+                f"F1(macro): {val_metrics['f1_macro']:.4f} │ "
+                f"F1(weighted): {val_metrics['f1_weighted']:.4f} │ "
+                f"F1(micro): {val_metrics['f1_micro']:.4f}"
             )
 
             # --- Save best model ---
@@ -347,6 +419,9 @@ class Trainer:
                 best_metrics["epoch"] = epoch + 1
                 best_metrics["train_loss"] = train_loss
                 best_metrics["val_loss"] = val_loss
+                # Also store train metrics for the best epoch
+                for k, v in train_metrics.items():
+                    best_metrics[f"train_{k}"] = v
 
                 save_path = Path(self.save_dir) / f"best_model_fold_{fold}.pth"
                 torch.save({
@@ -368,12 +443,39 @@ class Trainer:
                     print(f"  [STOP] Early stopping triggered (no improvement for {early_stop_patience} epochs)")
                     break
 
+            # --- Epoch checkpoint (for crash recovery) ---
+            checkpoint_path = Path(self.save_dir) / f"checkpoint_fold_{fold}.pth"
+            torch.save({
+                "fold": fold,
+                "epoch": epoch + 1,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "best_val_f1": best_val_f1,
+                "best_metrics": best_metrics,
+                "early_stop_counter": early_stop_counter,
+                "config": self.config,
+            }, checkpoint_path)
+
+            # Flush TensorBoard and free memory
+            writer.flush()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
         # --- Log confusion matrix for best epoch ---
         fig = plot_confusion_matrix(val_targets, val_preds, self.class_names, f"Fold {fold} - Confusion Matrix")
         writer.add_figure("confusion_matrix", fig, self.config["epochs"])
         plt.close(fig)
 
+        writer.flush()
         writer.close()
+
+        # Clean up checkpoint after fold completes successfully
+        checkpoint_path = Path(self.save_dir) / f"checkpoint_fold_{fold}.pth"
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+            print(f"  Fold {fold} checkpoint cleaned up.")
 
         print(f"\n  Fold {fold} best: Acc={best_metrics['accuracy']:.4f} | F1(macro)={best_metrics['f1_macro']:.4f} | Epoch={best_metrics['epoch']}")
 
@@ -484,13 +586,25 @@ class Trainer:
         test_metrics = compute_metrics(test_targets, test_preds)
 
         # --- Print test results ---
-        print(f"\n  Test Loss:             {test_loss:.4f}")
-        print(f"  Test Accuracy:         {test_metrics['accuracy']:.4f}")
-        print(f"  Test F1 (macro):       {test_metrics['f1_macro']:.4f}")
-        print(f"  Test F1 (micro):       {test_metrics['f1_micro']:.4f}")
-        print(f"  Test F1 (weighted):    {test_metrics['f1_weighted']:.4f}")
-        print(f"  Test Precision (macro):{test_metrics['precision_macro']:.4f}")
-        print(f"  Test Recall (macro):   {test_metrics['recall_macro']:.4f}")
+        print(f"\n  {'='*70}")
+        print(f"  TEST SET RESULTS")
+        print(f"  {'='*70}")
+        print(f"  Loss:                  {test_loss:.4f}")
+        print(f"  {'─'*70}")
+        print(f"  Accuracy:              {test_metrics['accuracy']:.4f}")
+        print(f"  {'─'*70}")
+        print(f"  Precision (macro):     {test_metrics['precision_macro']:.4f}")
+        print(f"  Precision (micro):     {test_metrics['precision_micro']:.4f}")
+        print(f"  Precision (weighted):  {test_metrics['precision_weighted']:.4f}")
+        print(f"  {'─'*70}")
+        print(f"  Recall (macro):        {test_metrics['recall_macro']:.4f}")
+        print(f"  Recall (micro):        {test_metrics['recall_micro']:.4f}")
+        print(f"  Recall (weighted):     {test_metrics['recall_weighted']:.4f}")
+        print(f"  {'─'*70}")
+        print(f"  F1-score (macro):      {test_metrics['f1_macro']:.4f}")
+        print(f"  F1-score (micro):      {test_metrics['f1_micro']:.4f}")
+        print(f"  F1-score (weighted):   {test_metrics['f1_weighted']:.4f}")
+        print(f"  {'='*70}")
 
         # --- Log to TensorBoard ---
         writer = SummaryWriter(log_dir=f"{self.log_dir}/test")
@@ -503,10 +617,27 @@ class Trainer:
         writer.add_figure("test/confusion_matrix", fig, 0)
         plt.close(fig)
 
-        # Classification report
-        report = classification_report(test_targets, test_preds, target_names=self.class_names, zero_division=0)
-        writer.add_text("test/classification_report", f"```\n{report}\n```", 0)
-        print(f"\n{report}")
+        # Classification report (with overall accuracy and all summary metrics)
+        report = classification_report(
+            test_targets, test_preds,
+            target_names=self.class_names,
+            zero_division=0,
+            digits=4,
+        )
+        overall_acc = accuracy_score(test_targets, test_preds)
+        report_header = (
+            f"{'='*70}\n"
+            f"  CLASSIFICATION REPORT\n"
+            f"{'='*70}\n"
+            f"  Accuracy:           {overall_acc:.4f} ({int(overall_acc * len(test_targets))}/{len(test_targets)})\n"
+            f"  Precision (macro):  {test_metrics['precision_macro']:.4f}  (micro): {test_metrics['precision_micro']:.4f}  (weighted): {test_metrics['precision_weighted']:.4f}\n"
+            f"  Recall    (macro):  {test_metrics['recall_macro']:.4f}  (micro): {test_metrics['recall_micro']:.4f}  (weighted): {test_metrics['recall_weighted']:.4f}\n"
+            f"  F1-score  (macro):  {test_metrics['f1_macro']:.4f}  (micro): {test_metrics['f1_micro']:.4f}  (weighted): {test_metrics['f1_weighted']:.4f}\n"
+            f"{'='*70}\n"
+        )
+        full_report = report_header + report
+        writer.add_text("test/classification_report", f"```\n{full_report}\n```", 0)
+        print(f"\n{full_report}")
 
         writer.close()
 

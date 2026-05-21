@@ -2,7 +2,8 @@
 Vertex AI training script for crop disease detection (CNN baseline).
 
 Runs on Vertex AI Custom Training with full dataset.
-- Downloads data from GCS
+- Downloads data from GCS (parallel, fast)
+- Balances classes via oversampling to median class count
 - Train + 5-fold CV on full ~42K images
 - Test evaluation on full ~19K images
 - TensorBoard logs synced to Vertex AI
@@ -17,6 +18,8 @@ Vertex AI runs this automatically via the job submission script.
 import os
 import sys
 import argparse
+import numpy as np
+import pandas as pd
 from pathlib import Path
 
 # Add project root to path (handles both local and container execution)
@@ -45,15 +48,23 @@ CONFIG = {
     "dropout_fc": 0.5,
 
     # Training
-    "epochs": 30,
-    "batch_size": 64,
+    "epochs": 200,
+    "batch_size": 128,
     "learning_rate": 1e-3,
     "weight_decay": 1e-4,
     "min_lr": 1e-6,
     "n_folds": 5,
 
-    # DataLoader
-    "num_workers": 4,
+    # LR scheduling
+    "use_reduce_lr_on_plateau": True,
+    "lr_factor": 0.5,
+    "lr_patience": 3,
+
+    # Early stopping
+    "early_stop_patience": 6,
+
+    # DataLoader (2 workers to stay within n1-standard-8's 30GB RAM)
+    "num_workers": 2,
 
     # Augmentation
     "min_aug": 0,
@@ -70,7 +81,7 @@ GCS_DATA_PREFIX = "data"
 # =========================================================
 
 def download_from_gcs(bucket_name, gcs_prefix, local_dir):
-    """Download a directory from GCS to local filesystem."""
+    """Download a directory from GCS to local filesystem (sequential)."""
     local_dir = Path(local_dir)
     client = storage.Client()
     bucket = client.bucket(bucket_name)
@@ -88,6 +99,49 @@ def download_from_gcs(bucket_name, gcs_prefix, local_dir):
         local_path = local_dir / relative_path
         local_path.parent.mkdir(parents=True, exist_ok=True)
         blob.download_to_filename(str(local_path))
+
+
+def download_selected_files_parallel(bucket_name, image_paths, data_root, max_workers=32):
+    """Download specific files from GCS in parallel using ThreadPoolExecutor."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from tqdm import tqdm
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    data_root = Path(data_root)
+
+    def _download_one(gcs_path):
+        local_path = data_root / gcs_path
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        blob = bucket.blob(gcs_path)
+        blob.download_to_filename(str(local_path))
+
+    # Deduplicate and normalize paths
+    unique_paths = list(set(p.replace("\\", "/") for p in image_paths))
+    print(f"  Downloading {len(unique_paths)} files with {max_workers} parallel workers...")
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_download_one, p): p for p in unique_paths}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="  Downloading"):
+            try:
+                future.result()
+            except Exception as e:
+                failed.append((futures[future], str(e)))
+
+    if failed:
+        print(f"  WARNING: {len(failed)} files failed to download")
+        for path, err in failed[:5]:
+            print(f"    {path}: {err}")
+
+
+def download_file_from_gcs(bucket_name, gcs_path, local_path):
+    """Download a single file from GCS."""
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(gcs_path)
+    blob.download_to_filename(str(local_path))
+    print(f"  Downloaded: gs://{bucket_name}/{gcs_path} -> {local_path}")
 
 
 def upload_to_gcs(local_path, bucket_name, gcs_path):
@@ -110,11 +164,60 @@ def upload_dir_to_gcs(local_dir, bucket_name, gcs_prefix):
 
 
 # =========================================================
+# CLASS BALANCING
+# =========================================================
+
+def balance_classes_by_oversampling(df, target_col="label"):
+    """
+    Balance classes by oversampling underrepresented classes to the median
+    class count. Classes above the median are left untouched.
+
+    This ensures the DataLoader sees a roughly equal number of samples per
+    class. The actual augmentation (random transforms) applied during training
+    ensures oversampled copies are visually diverse.
+
+    Returns a new DataFrame with oversampled rows appended.
+    """
+    class_counts = df[target_col].value_counts()
+    median_count = int(class_counts.median())
+
+    print(f"\n  Class balance statistics:")
+    print(f"    Min class count:    {class_counts.min()}")
+    print(f"    Max class count:    {class_counts.max()}")
+    print(f"    Median class count: {median_count}")
+    print(f"    Std:                {class_counts.std():.1f}")
+
+    balanced_dfs = []
+    oversampled_count = 0
+
+    for label_val in sorted(df[target_col].unique()):
+        class_df = df[df[target_col] == label_val]
+        current_count = len(class_df)
+
+        if current_count >= median_count:
+            # Class already at or above median — keep as-is
+            balanced_dfs.append(class_df)
+        else:
+            # Oversample to reach median
+            shortage = median_count - current_count
+            oversampled = class_df.sample(n=shortage, replace=True, random_state=42)
+            balanced_dfs.append(pd.concat([class_df, oversampled], ignore_index=True))
+            oversampled_count += shortage
+
+    balanced_df = pd.concat(balanced_dfs, ignore_index=True)
+    print(f"    Oversampled rows:   {oversampled_count}")
+    print(f"    Original size:      {len(df)}")
+    print(f"    Balanced size:      {len(balanced_df)}")
+
+    return balanced_df
+
+
+# =========================================================
 # MAIN
 # =========================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Crop Disease CNN Training")
+    parser = argparse.ArgumentParser(description="Crop Disease CNN Training — Full Dataset")
     parser.add_argument("--local-test", action="store_true",
                         help="Run locally instead of on Vertex AI (uses local data)")
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
@@ -132,7 +235,7 @@ def main():
 
     print("=" * 60)
     print("  VERTEX AI TRAINING — CNN BASELINE")
-    print("  (Full dataset: ~42K train, ~19K test)")
+    print("  (Full dataset: ~42K train, ~19K test, class-balanced)")
     print("=" * 60)
 
     # --- Device ---
@@ -140,8 +243,8 @@ def main():
     if device == "cuda":
         print(f"\n  GPU: {torch.cuda.get_device_name(0)}")
         dprops = torch.cuda.get_device_properties(0)
-vram_gb = getattr(dprops, "total_memory", getattr(dprops, "total_mem", 0)) / 1e9
-print(f"  VRAM: {vram_gb:.1f} GB")
+        vram_gb = getattr(dprops, "total_memory", getattr(dprops, "total_mem", 0)) / 1e9
+        print(f"  VRAM: {vram_gb:.1f} GB")
     else:
         print("\n  WARNING: No GPU detected — training on CPU")
 
@@ -151,8 +254,8 @@ print(f"  VRAM: {vram_gb:.1f} GB")
         data_root = str(PROJECT_ROOT)
         train_csv = str(PROJECT_ROOT / "notebook" / "train.csv")
         test_csv = str(PROJECT_ROOT / "notebook" / "test.csv")
-        log_dir = str(PROJECT_ROOT / "runs" / "vertex_local_test")
-        save_dir = str(PROJECT_ROOT / "models" / "saved" / "vertex_local_test")
+        log_dir = str(PROJECT_ROOT / "runs" / "vertex_full")
+        save_dir = str(PROJECT_ROOT / "models" / "saved" / "vertex_full")
     else:
         # On Vertex AI: download from GCS to /tmp
         data_root = "/tmp/crop_data"
@@ -165,25 +268,39 @@ print(f"  VRAM: {vram_gb:.1f} GB")
         # Vertex AI provides AIP_MODEL_DIR for model output
         save_dir = os.getenv("AIP_MODEL_DIR", "/tmp/model_output")
 
-        print(f"\n  Downloading data from gs://{GCS_BUCKET}/{GCS_DATA_PREFIX}/")
+        # Step 1: Download only the CSV manifests (lightweight)
+        print(f"\n  Downloading CSV manifests from gs://{GCS_BUCKET}/{GCS_DATA_PREFIX}/")
+        Path(data_root).mkdir(parents=True, exist_ok=True)
+        download_file_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/train.csv", train_csv)
+        download_file_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/test.csv", test_csv)
 
-        # Download training images
-        download_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/processed/combined_train",
-                          f"{data_root}/data/processed/combined_train")
+    # --- Load and balance training data ---
+    print("\n  Loading CSV manifests...")
+    train_df = pd.read_csv(train_csv)
+    test_df = pd.read_csv(test_csv)
 
-        # Download test images
-        download_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/processed/combined_test",
-                          f"{data_root}/data/processed/combined_test")
+    print(f"  Original train: {len(train_df)} samples, {train_df['label'].nunique()} classes")
+    print(f"  Test:           {len(test_df)} samples, {test_df['label'].nunique()} classes")
 
-        # Download CSVs
-        download_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/train.csv",
-                          f"{data_root}")
-        download_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/test.csv",
-                          f"{data_root}")
+    # Balance training classes by oversampling to median
+    train_df_balanced = balance_classes_by_oversampling(train_df, target_col="label")
 
-        # Fix paths in CSV: the CSVs reference paths relative to project root
-        # On Vertex AI, data_root IS the project root
+    # Step 2 (Vertex AI only): Download all images in parallel
+    if not args.local_test:
+        # Collect unique image paths from both train (balanced) and test
+        all_image_paths = list(set(
+            train_df_balanced["image_path"].values.tolist() +
+            test_df["image_path"].values.tolist()
+        ))
+        print(f"\n  Downloading {len(all_image_paths)} unique images (parallel)...")
+        download_selected_files_parallel(GCS_BUCKET, all_image_paths, data_root)
         print("  Data download complete.")
+
+    # Save balanced train CSV to temp location
+    temp_dir = Path("/tmp/crop_balanced" if not args.local_test else str(PROJECT_ROOT / "data" / "temp_balanced"))
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    balanced_train_csv = str(temp_dir / "train_balanced.csv")
+    train_df_balanced.to_csv(balanced_train_csv, index=False)
 
     # --- Transforms ---
     train_transform = get_train_transforms(
@@ -196,22 +313,20 @@ print(f"  VRAM: {vram_gb:.1f} GB")
     # --- Datasets ---
     print("\n  Loading datasets...")
     train_dataset = CropDiseaseDataset(
-        csv_path=train_csv,
+        csv_path=balanced_train_csv,
         data_root=data_root,
-        transform=train_transform,
     )
     test_dataset = CropDiseaseDataset(
         csv_path=test_csv,
         data_root=data_root,
-        transform=eval_transform,
     )
 
     class_names = train_dataset.get_class_names()
     CONFIG["num_classes"] = train_dataset.num_classes
 
-    print(f"  Train samples: {len(train_dataset)}")
-    print(f"  Test samples:  {len(test_dataset)}")
-    print(f"  Num classes:   {train_dataset.num_classes}")
+    print(f"  Train samples (balanced): {len(train_dataset)}")
+    print(f"  Test samples:             {len(test_dataset)}")
+    print(f"  Num classes:              {train_dataset.num_classes}")
 
     # --- Model factory ---
     def model_fn():

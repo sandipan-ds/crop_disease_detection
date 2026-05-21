@@ -51,7 +51,7 @@ class CropDiseaseDataset(Dataset):
                 sampled.append(class_df.sample(n=n, random_state=42))
             self.df = pd.concat(sampled, ignore_index=True)
 
-        self.image_paths = self.df["image_path"].values
+        self.image_paths = [p.replace("\\", "/") for p in self.df["image_path"].values]
         self.labels = self.df["label"].values
         self.class_names = self.df["target"].values
         self.num_classes = self.df["label"].nunique()
@@ -60,7 +60,7 @@ class CropDiseaseDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, idx):
-        # Build full path
+        # Build full path (forward slashes ensure Linux compatibility)
         img_path = self.data_root / self.image_paths[idx]
         label = self.labels[idx]
 
