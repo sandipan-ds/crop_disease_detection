@@ -1,12 +1,12 @@
 """
-Submit a Full Custom Training Job to Vertex AI.
+Submit a test Custom Training Job to Vertex AI.
 
-Uses vertex_ai_training.py — full dataset (~42K train + ~19K test),
-class-balanced via oversampling, 5-fold CV, 30 epochs.
+Uses vertex_ai_training_test.py — picks 20 random classes,
+~5000 train samples, runs the full pipeline on a GPU.
 
 Usage:
-    python scripts/submit_vertex_job.py
-    python scripts/submit_vertex_job.py --gpu T4 --region asia-south1 --epochs 30
+    python scripts/submit_vertex_job_test.py
+    python scripts/submit_vertex_job_test.py --gpu T4 --region asia-south1 --epochs 10
 """
 
 import os
@@ -58,7 +58,7 @@ TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 def _build_and_upload_package(project_root, bucket_name):
     """
     Build a Python source distribution containing:
-      - trainer/task.py  (vertex_ai_training.py)
+      - trainer/task.py  (vertex_ai_training_test.py)
       - src/             (dataset, model, trainer, augmentations)
 
     Uploads the sdist .tar.gz to GCS and returns the gs:// URI.
@@ -72,7 +72,7 @@ def _build_and_upload_package(project_root, bucket_name):
         trainer_dir.mkdir()
         (trainer_dir / "__init__.py").write_text("")
         shutil.copy2(
-            project_root / "scripts" / "vertex_ai_training.py",
+            project_root / "scripts" / "vertex_ai_training_test.py",
             trainer_dir / "task.py",
         )
 
@@ -139,31 +139,22 @@ def _build_and_upload_package(project_root, bucket_name):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Submit Vertex AI Full Training Job")
+    parser = argparse.ArgumentParser(description="Submit Vertex AI Test Job")
     parser.add_argument("--gpu", type=str, default="T4", choices=GPU_OPTIONS.keys())
     parser.add_argument("--region", type=str, default=REGION)
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--no-tensorboard", action="store_true",
-                        help="Disable Vertex AI managed TensorBoard (logs still saved to GCS)")
-    parser.add_argument("--timeout", type=int, default=86400,
-                        help="Max job duration in seconds (default: 86400 = 24h)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     gpu_config = GPU_OPTIONS[args.gpu]
     image = container_uri(args.region)
-    job_name = f"crop-disease-cnn-full-{args.gpu.lower()}-{TIMESTAMP}"
-
-    # Disable TensorBoard sidecar if requested (suspected crash cause)
-    if args.no_tensorboard:
-        tensorboard = None
-    else:
-        tensorboard = TENSORBOARD_ASIA if args.region.startswith("asia") else None
+    job_name = f"crop-disease-cnn-test-{args.gpu.lower()}-{TIMESTAMP}"
+    tensorboard = TENSORBOARD_ASIA if args.region.startswith("asia") else None
 
     print("=" * 60)
-    print("  VERTEX AI — FULL TRAINING JOB SUBMISSION")
+    print("  VERTEX AI — TEST JOB SUBMISSION")
     print("=" * 60)
     print(f"\n  Job name:       {job_name}")
     print(f"  Project:        {PROJECT_ID}")
@@ -175,10 +166,8 @@ def main():
     print(f"  Batch size:     {args.batch_size}")
     print(f"  Learning rate:  {args.lr}")
     print(f"  GCS bucket:     gs://{BUCKET_NAME}/")
-    print(f"  TensorBoard:    {'DISABLED' if args.no_tensorboard else ('enabled' if tensorboard else 'N/A')}")
-    print(f"  Timeout:        {args.timeout}s ({args.timeout//3600}h)")
-    print(f"  Dataset:        FULL (~42K train + ~19K test, class-balanced)")
-    print(f"  Script:         vertex_ai_training.py (packaged as trainer.task)")
+    print(f"  TensorBoard:    {'enabled' if tensorboard else 'N/A (use asia-south1)'}")
+    print(f"  Script:         vertex_ai_training_test.py (packaged as trainer.task)")
 
     if args.dry_run:
         print("\n  [DRY RUN] Job not submitted.")
@@ -204,7 +193,6 @@ def main():
 
     print(f"\n  Submitting job: {job_name}")
     print("  This may take 5-10 minutes to provision...")
-    print("  Full training will take several hours.")
 
     job.run(
         args=[
@@ -233,4 +221,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

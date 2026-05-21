@@ -79,6 +79,40 @@ def download_from_gcs(bucket_name, gcs_prefix, local_dir):
         blob.download_to_filename(str(local_path))
 
 
+def download_selected_files_parallel(bucket_name, image_paths, data_root, max_workers=32):
+    """Download specific files from GCS in parallel using ThreadPoolExecutor."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from tqdm import tqdm
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    data_root = Path(data_root)
+
+    def _download_one(gcs_path):
+        local_path = data_root / gcs_path
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        blob = bucket.blob(gcs_path)
+        blob.download_to_filename(str(local_path))
+
+    # Deduplicate paths (train and test might overlap)
+    unique_paths = list(set(p.replace("\\", "/") for p in image_paths))
+    print(f"  Downloading {len(unique_paths)} files with {max_workers} parallel workers...")
+
+    failed = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_download_one, p): p for p in unique_paths}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="  Downloading"):
+            try:
+                future.result()
+            except Exception as e:
+                failed.append((futures[future], str(e)))
+
+    if failed:
+        print(f"  WARNING: {len(failed)} files failed to download")
+        for path, err in failed[:5]:
+            print(f"    {path}: {err}")
+
+
 def download_file_from_gcs(bucket_name, gcs_path, local_path):
     client = storage.Client()
     bucket = client.bucket(bucket_name)
@@ -145,7 +179,9 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cuda":
         print(f"\n  GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        dprops = torch.cuda.get_device_properties(0)
+        vram_gb = getattr(dprops, "total_memory", getattr(dprops, "total_mem", 0)) / 1e9
+        print(f"  VRAM: {vram_gb:.1f} GB")
     else:
         print("\n  WARNING: No GPU detected — training on CPU")
 
@@ -163,14 +199,11 @@ def main():
         log_dir = os.getenv("AIP_TENSORBOARD_LOG_DIR", "/tmp/runs")
         save_dir = os.getenv("AIP_MODEL_DIR", "/tmp/model_output")
 
-        print(f"\n  Downloading data from gs://{GCS_BUCKET}/{GCS_DATA_PREFIX}/")
-        download_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/processed/combined_train",
-                          f"{data_root}/data/processed/combined_train")
-        download_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/processed/combined_test",
-                          f"{data_root}/data/processed/combined_test")
+        # Step 1: Download only the CSV manifests (lightweight)
+        print(f"\n  Downloading CSV manifests from gs://{GCS_BUCKET}/{GCS_DATA_PREFIX}/")
+        Path(data_root).mkdir(parents=True, exist_ok=True)
         download_file_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/train.csv", train_csv)
         download_file_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/test.csv", test_csv)
-        print("  Data download complete.")
 
     # Read CSVs and select random subset of classes
     print("\n  Selecting random subset of classes...")
@@ -182,6 +215,13 @@ def main():
     # Filter both CSVs
     train_subset = _filter_csv(train_csv, selected_labels, sample_n=SUBSET_TRAIN_SAMPLES)
     test_subset = _filter_csv(test_csv, selected_labels)
+
+    # Step 2 (Vertex AI only): Download only the exact images in the filtered subset
+    if not args.local_test:
+        all_image_paths = pd.concat([train_subset, test_subset])["image_path"].values.tolist()
+        print(f"\n  Downloading {len(all_image_paths)} images (parallel)...")
+        download_selected_files_parallel(GCS_BUCKET, all_image_paths, data_root)
+        print("  Data download complete.")
 
     # Save filtered CSVs to temp files
     temp_dir = Path("/tmp/crop_subset" if not args.local_test else str(PROJECT_ROOT / "data" / "temp_subset"))
