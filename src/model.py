@@ -1,11 +1,18 @@
 """
-CNN baseline model for crop disease classification.
+Model definitions for crop disease classification.
 
-Architecture: 5 conv blocks → Global Average Pooling → FC classifier
-Designed as a baseline before moving to transfer learning.
+Supports:
+  - cnn_baseline: Custom 5-block CNN (~4.9M params)
+  - resnet_50:    Pretrained ResNet-50 (ImageNet) with custom head
+  - vgg_16:       Pretrained VGG-16 (ImageNet) with custom head
+  - vit:          Pretrained ViT-B/16 (ImageNet) with custom head
+
+Usage:
+    model = get_model("resnet_50", num_classes=102)
 """
 
 import torch.nn as nn
+import torchvision.models as models
 
 
 class ConvBlock(nn.Module):
@@ -84,3 +91,134 @@ def build_model(num_classes=102, dropout_conv=0.25, dropout_fc=0.5):
         dropout_conv=dropout_conv,
         dropout_fc=dropout_fc,
     )
+
+
+# =========================================================
+# PRETRAINED MODELS (Transfer Learning)
+# =========================================================
+
+class ResNet50Transfer(nn.Module):
+    """ResNet-50 with frozen early layers + custom classifier head."""
+
+    def __init__(self, num_classes=102, dropout_fc=0.5, freeze_backbone=True):
+        super().__init__()
+        self.backbone = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)
+
+        # Freeze backbone layers (unfreeze later for fine-tuning)
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        # Replace the final FC layer
+        in_features = self.backbone.fc.in_features  # 2048
+        self.backbone.fc = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_fc),
+            nn.Linear(512, num_classes),
+        )
+
+        # Unfreeze layer4 + fc for training
+        if freeze_backbone:
+            for param in self.backbone.layer4.parameters():
+                param.requires_grad = True
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
+class VGG16Transfer(nn.Module):
+    """VGG-16 with frozen features + custom classifier head."""
+
+    def __init__(self, num_classes=102, dropout_fc=0.5, freeze_backbone=True):
+        super().__init__()
+        self.backbone = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
+
+        # Freeze feature extractor
+        if freeze_backbone:
+            for param in self.backbone.features.parameters():
+                param.requires_grad = False
+
+        # Replace classifier head
+        self.backbone.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_fc),
+            nn.Linear(4096, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_fc),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
+class ViTTransfer(nn.Module):
+    """Vision Transformer (ViT-B/16) with custom classifier head."""
+
+    def __init__(self, num_classes=102, dropout_fc=0.5, freeze_backbone=True):
+        super().__init__()
+        self.backbone = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+
+        # Freeze all layers except the head
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        # Replace classification head
+        in_features = self.backbone.heads.head.in_features  # 768
+        self.backbone.heads.head = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_fc),
+            nn.Linear(512, num_classes),
+        )
+
+        # Unfreeze last 2 encoder blocks for fine-tuning
+        if freeze_backbone:
+            for block in self.backbone.encoder.layers[-2:]:
+                for param in block.parameters():
+                    param.requires_grad = True
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
+# =========================================================
+# UNIFIED MODEL FACTORY
+# =========================================================
+
+MODEL_REGISTRY = {
+    "cnn_baseline": "CropDiseaseCNN",
+    "resnet_50": "ResNet50Transfer",
+    "vgg_16": "VGG16Transfer",
+    "vit": "ViTTransfer",
+}
+
+
+def get_model(model_name, num_classes=102, dropout_fc=0.5, **kwargs):
+    """
+    Unified factory to create any supported model by name.
+
+    Args:
+        model_name: One of 'cnn_baseline', 'resnet_50', 'vgg_16', 'vit'
+        num_classes: Number of output classes
+        dropout_fc: Dropout rate for FC layers
+
+    Returns:
+        nn.Module
+    """
+    if model_name == "cnn_baseline":
+        return CropDiseaseCNN(num_classes=num_classes, dropout_fc=dropout_fc, **kwargs)
+    elif model_name == "resnet_50":
+        return ResNet50Transfer(num_classes=num_classes, dropout_fc=dropout_fc)
+    elif model_name == "vgg_16":
+        return VGG16Transfer(num_classes=num_classes, dropout_fc=dropout_fc)
+    elif model_name == "vit":
+        return ViTTransfer(num_classes=num_classes, dropout_fc=dropout_fc)
+    else:
+        raise ValueError(f"Unknown model: {model_name}. Choose from {list(MODEL_REGISTRY.keys())}")
+

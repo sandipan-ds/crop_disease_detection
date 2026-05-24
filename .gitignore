@@ -62,7 +62,11 @@ scripts/*.json
 
 # ─── Large CSVs (generated, not source) ───
 notebook/train.csv
+notebook/val.csv
 notebook/test.csv
+notebook/test_original.csv
+notebook/test_new.csv
+notebook/split_report.txt
 
 # ─── Temp files from label encoding cell ───
 notebook/label_encoding_cell.py
