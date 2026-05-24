@@ -141,7 +141,8 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Submit Vertex AI Full Training Job")
     parser.add_argument("--model", type=str, default="cnn_baseline",
-                        choices=["cnn_baseline", "resnet_50", "vgg_16", "vit"],
+                        choices=["cnn_baseline", "resnet_50", "vgg_16", "vit",
+                                 "efficientnet_b4", "swin_base"],
                         help="Model architecture to train")
     parser.add_argument("--gpu", type=str, default="T4", choices=GPU_OPTIONS.keys())
     parser.add_argument("--region", type=str, default=REGION)
