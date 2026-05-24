@@ -3,9 +3,9 @@ Vertex AI training script for crop disease detection (CNN baseline).
 
 Runs on Vertex AI Custom Training with full dataset.
 - Downloads data from GCS (parallel, fast)
-- Balances classes via oversampling to median class count
-- Train + 5-fold CV on full ~42K images
-- Test evaluation on full ~19K images
+- Trains on ALL ~42K images (train.csv)
+- Splits test.csv 50:50 in-memory into val (~9.5K) and test (~9.5K)
+- Class-balanced via WeightedRandomSampler + weighted CrossEntropyLoss
 - TensorBoard logs synced to Vertex AI
 - Best model saved back to GCS
 
@@ -31,7 +31,7 @@ import torch
 from google.cloud import storage
 
 from src.dataset import CropDiseaseDataset
-from src.model import build_model
+from src.model import build_model, get_model
 from src.trainer import Trainer
 from src.augmentations import get_train_transforms, get_eval_transforms
 
@@ -53,7 +53,7 @@ CONFIG = {
     "learning_rate": 1e-3,
     "weight_decay": 1e-4,
     "min_lr": 1e-6,
-    "n_folds": 5,
+    "n_folds": 1,  # kept for backward compat; ignored in train_full mode
 
     # LR scheduling
     "use_reduce_lr_on_plateau": True,
@@ -63,8 +63,8 @@ CONFIG = {
     # Early stopping
     "early_stop_patience": 6,
 
-    # DataLoader (2 workers to stay within n1-standard-8's 30GB RAM)
-    "num_workers": 2,
+    # DataLoader (0 workers = main process loads data; avoids fork+CUDA deadlocks)
+    "num_workers": 0,
 
     # Augmentation
     "min_aug": 0,
@@ -74,6 +74,7 @@ CONFIG = {
 # GCS settings (loaded from env or defaults)
 GCS_BUCKET = os.getenv("GCS_BUCKET_NAME", "crop-disease-detection-1")
 GCS_DATA_PREFIX = "data"
+SPLIT_SEED = 42  # reproducible val/test split from test.csv
 
 
 # =========================================================
@@ -144,12 +145,12 @@ def download_file_from_gcs(bucket_name, gcs_path, local_path):
     print(f"  Downloaded: gs://{bucket_name}/{gcs_path} -> {local_path}")
 
 
-def upload_to_gcs(local_path, bucket_name, gcs_path):
-    """Upload a single file to GCS."""
+def upload_to_gcs(local_path, bucket_name, gcs_path, timeout=120):
+    """Upload a single file to GCS with timeout."""
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(gcs_path)
-    blob.upload_from_filename(str(local_path))
+    blob.upload_from_filename(str(local_path), timeout=timeout)
     print(f"  Uploaded: gs://{bucket_name}/{gcs_path}")
 
 
@@ -217,13 +218,21 @@ def balance_classes_by_oversampling(df, target_col="label"):
 # =========================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Crop Disease CNN Training — Full Dataset")
+    parser = argparse.ArgumentParser(description="Crop Disease Training — Full Dataset")
     parser.add_argument("--local-test", action="store_true",
                         help="Run locally instead of on Vertex AI (uses local data)")
+    parser.add_argument("--model", type=str, default="cnn_baseline",
+                        choices=["cnn_baseline", "resnet_50", "vgg_16", "vit"],
+                        help="Model architecture to train")
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
     parser.add_argument("--batch-size", type=int, default=None, help="Override batch size")
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
+    parser.add_argument("--folds", type=int, default=None,
+                        help="(Legacy) Number of CV folds. Ignored in train-full mode.")
     args = parser.parse_args()
+
+    # Model name used in all paths
+    model_name = args.model
 
     # Override config from args
     if args.epochs:
@@ -232,10 +241,12 @@ def main():
         CONFIG["batch_size"] = args.batch_size
     if args.lr:
         CONFIG["learning_rate"] = args.lr
+    if args.folds:
+        CONFIG["n_folds"] = args.folds
 
     print("=" * 60)
-    print("  VERTEX AI TRAINING — CNN BASELINE")
-    print("  (Full dataset: ~42K train, ~19K test, class-balanced)")
+    print(f"  VERTEX AI TRAINING — {model_name.upper()}")
+    print("  (Full train ~42K | Val ~9.5K | Test ~9.5K | class-balanced)")
     print("=" * 60)
 
     # --- Device ---
@@ -248,25 +259,23 @@ def main():
     else:
         print("\n  WARNING: No GPU detected — training on CPU")
 
-    # --- Data directory setup ---
+    # --- Data directory setup (model_name in paths to avoid overwriting) ---
     if args.local_test:
         # Use local data paths
         data_root = str(PROJECT_ROOT)
         train_csv = str(PROJECT_ROOT / "notebook" / "train.csv")
         test_csv = str(PROJECT_ROOT / "notebook" / "test.csv")
-        log_dir = str(PROJECT_ROOT / "runs" / "vertex_full")
-        save_dir = str(PROJECT_ROOT / "models" / "saved" / "vertex_full")
+        log_dir = str(PROJECT_ROOT / "runs" / model_name)
+        save_dir = str(PROJECT_ROOT / "models" / "saved" / model_name)
     else:
         # On Vertex AI: download from GCS to /tmp
         data_root = "/tmp/crop_data"
         train_csv = f"{data_root}/train.csv"
         test_csv = f"{data_root}/test.csv"
 
-        # Vertex AI provides AIP_TENSORBOARD_LOG_DIR for managed TensorBoard
-        log_dir = os.getenv("AIP_TENSORBOARD_LOG_DIR", "/tmp/runs")
-
-        # Vertex AI provides AIP_MODEL_DIR for model output
-        save_dir = os.getenv("AIP_MODEL_DIR", "/tmp/model_output")
+        # Use local dirs with model_name for actual I/O; upload to GCS separately
+        log_dir = f"/tmp/runs/{model_name}"
+        save_dir = f"/tmp/model_output/{model_name}"
 
         # Step 1: Download only the CSV manifests (lightweight)
         print(f"\n  Downloading CSV manifests from gs://{GCS_BUCKET}/{GCS_DATA_PREFIX}/")
@@ -274,33 +283,45 @@ def main():
         download_file_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/train.csv", train_csv)
         download_file_from_gcs(GCS_BUCKET, f"{GCS_DATA_PREFIX}/test.csv", test_csv)
 
-    # --- Load and balance training data ---
+    # --- Load CSV manifests ---
     print("\n  Loading CSV manifests...")
     train_df = pd.read_csv(train_csv)
-    test_df = pd.read_csv(test_csv)
+    full_test_df = pd.read_csv(test_csv)
 
-    print(f"  Original train: {len(train_df)} samples, {train_df['label'].nunique()} classes")
-    print(f"  Test:           {len(test_df)} samples, {test_df['label'].nunique()} classes")
+    print(f"  Train:     {len(train_df)} samples, {train_df['label'].nunique()} classes")
+    print(f"  Test (full): {len(full_test_df)} samples, {full_test_df['label'].nunique()} classes")
 
-    # Balance training classes by oversampling to median
-    train_df_balanced = balance_classes_by_oversampling(train_df, target_col="label")
+    # --- Split test.csv 50:50 stratified into val + test (in-memory) ---
+    print("\n  Splitting test.csv 50:50 into val + test (stratified, all 102 classes in both)...")
+    np.random.seed(SPLIT_SEED)
+    val_idx, test_idx = [], []
+    for label_val in sorted(full_test_df["label"].unique()):
+        class_rows = full_test_df[full_test_df["label"] == label_val].index.tolist()
+        np.random.shuffle(class_rows)
+        half = max(1, len(class_rows) // 2)
+        val_idx.extend(class_rows[:half])
+        test_idx.extend(class_rows[half:])
+
+    val_df = full_test_df.loc[val_idx].reset_index(drop=True)
+    test_df = full_test_df.loc[test_idx].reset_index(drop=True)
+
+    print(f"  Val:       {len(val_df)} samples, {val_df['label'].nunique()} classes")
+    print(f"  Test:      {len(test_df)} samples, {test_df['label'].nunique()} classes")
+
+    # Print class distribution summary
+    class_counts = train_df['label'].value_counts()
+    print(f"  Train class sizes: min={class_counts.min()}, max={class_counts.max()}, "
+          f"mean={class_counts.mean():.0f}, median={class_counts.median():.0f}")
 
     # Step 2 (Vertex AI only): Download all images in parallel
     if not args.local_test:
-        # Collect unique image paths from both train (balanced) and test
         all_image_paths = list(set(
-            train_df_balanced["image_path"].values.tolist() +
-            test_df["image_path"].values.tolist()
+            train_df["image_path"].values.tolist() +
+            full_test_df["image_path"].values.tolist()
         ))
         print(f"\n  Downloading {len(all_image_paths)} unique images (parallel)...")
         download_selected_files_parallel(GCS_BUCKET, all_image_paths, data_root)
         print("  Data download complete.")
-
-    # Save balanced train CSV to temp location
-    temp_dir = Path("/tmp/crop_balanced" if not args.local_test else str(PROJECT_ROOT / "data" / "temp_balanced"))
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    balanced_train_csv = str(temp_dir / "train_balanced.csv")
-    train_df_balanced.to_csv(balanced_train_csv, index=False)
 
     # --- Transforms ---
     train_transform = get_train_transforms(
@@ -310,29 +331,41 @@ def main():
     )
     eval_transform = get_eval_transforms(img_size=CONFIG["img_size"])
 
-    # --- Datasets ---
+    # --- Save in-memory val/test splits as temp CSVs for Dataset loading ---
+    val_csv_path = Path(data_root) / "_val_split.csv" if not args.local_test else PROJECT_ROOT / "notebook" / "_val_split.csv"
+    test_csv_path = Path(data_root) / "_test_split.csv" if not args.local_test else PROJECT_ROOT / "notebook" / "_test_split.csv"
+    val_df.to_csv(val_csv_path, index=False)
+    test_df.to_csv(test_csv_path, index=False)
+
+    # --- Datasets (no oversampling — WeightedRandomSampler handles balance) ---
     print("\n  Loading datasets...")
     train_dataset = CropDiseaseDataset(
-        csv_path=balanced_train_csv,
+        csv_path=train_csv,
+        data_root=data_root,
+    )
+    val_dataset = CropDiseaseDataset(
+        csv_path=str(val_csv_path),
         data_root=data_root,
     )
     test_dataset = CropDiseaseDataset(
-        csv_path=test_csv,
+        csv_path=str(test_csv_path),
         data_root=data_root,
     )
 
     class_names = train_dataset.get_class_names()
     CONFIG["num_classes"] = train_dataset.num_classes
 
-    print(f"  Train samples (balanced): {len(train_dataset)}")
-    print(f"  Test samples:             {len(test_dataset)}")
-    print(f"  Num classes:              {train_dataset.num_classes}")
+    print(f"  Train samples: {len(train_dataset)}")
+    print(f"  Val samples:   {len(val_dataset)}")
+    print(f"  Test samples:  {len(test_dataset)}")
+    print(f"  Num classes:   {train_dataset.num_classes}")
+    print(f"  Balancing:     WeightedRandomSampler + class-weighted CrossEntropyLoss")
 
     # --- Model factory ---
     def model_fn():
-        return build_model(
+        return get_model(
+            model_name=model_name,
             num_classes=CONFIG["num_classes"],
-            dropout_conv=CONFIG["dropout_conv"],
             dropout_fc=CONFIG["dropout_fc"],
         )
 
@@ -342,6 +375,54 @@ def main():
     print(f"\n  Model params: {total_params:,}")
     del model_temp
 
+    # --- GCS checkpoint sync (crash recovery) ---
+    GCS_CHECKPOINT_PREFIX = f"checkpoints/{model_name}"
+
+    def sync_checkpoints_to_gcs(file_paths):
+        """Upload checkpoint files to GCS after each epoch (with timeout)."""
+        import threading
+
+        def _upload():
+            for file_path in file_paths:
+                filename = Path(file_path).name
+                gcs_path = f"{GCS_CHECKPOINT_PREFIX}/{filename}"
+                upload_to_gcs(file_path, GCS_BUCKET, gcs_path, timeout=120)
+
+        # Run upload in a thread with timeout to prevent hanging
+        t = threading.Thread(target=_upload, daemon=True)
+        t.start()
+        t.join(timeout=180)  # max 3 min for checkpoint upload
+        if t.is_alive():
+            print("  [WARN] Checkpoint upload timed out (180s) — skipping, will retry next epoch")
+
+    def download_checkpoints_from_gcs(local_save_dir):
+        """Download existing checkpoints from GCS for resume."""
+        client = storage.Client()
+        bucket = client.bucket(GCS_BUCKET)
+        blobs = list(bucket.list_blobs(prefix=GCS_CHECKPOINT_PREFIX + "/"))
+
+        if not blobs:
+            print("  No existing checkpoints found in GCS.")
+            return
+
+        print(f"  [RESUME] Found {len(blobs)} checkpoint files in GCS:")
+        for blob in blobs:
+            if blob.name.endswith("/"):
+                continue
+            filename = blob.name.split("/")[-1]
+            local_path = Path(local_save_dir) / filename
+            blob.download_to_filename(str(local_path))
+            print(f"    Downloaded: {filename}")
+
+    # Ensure save_dir exists before checkpoint download/training
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
+
+    # Download existing checkpoints (if any) for resume
+    if not args.local_test:
+        print(f"\n  Checking GCS for existing checkpoints...")
+        download_checkpoints_from_gcs(save_dir)
+
     # --- Trainer ---
     trainer = Trainer(
         model_fn=model_fn,
@@ -350,31 +431,41 @@ def main():
         save_dir=save_dir,
         device=device,
         class_names=class_names,
+        on_checkpoint=sync_checkpoints_to_gcs if not args.local_test else None,
     )
 
-    # --- Run 5-fold CV ---
-    fold_results, avg_metrics = trainer.run_cv(
-        dataset=train_dataset,
+    # --- Train on full train set, validate on val set ---
+    print("\n  Training on FULL train set, validating on dedicated val set...")
+    best_metrics = trainer.train_fold(
+        fold=1,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         train_transform=train_transform,
         eval_transform=eval_transform,
     )
 
-    # --- Final test evaluation ---
-    best_fold = max(range(1, CONFIG["n_folds"] + 1),
-                    key=lambda f: fold_results[f - 1]["f1_macro"])
-    print(f"\n  Using fold {best_fold} for test evaluation (highest CV F1)")
-
+    # --- Final test evaluation on held-out test set ---
+    print(f"\n  Running final test evaluation on held-out test set...")
     trainer.evaluate_test(
         test_dataset=test_dataset,
         eval_transform=eval_transform,
-        fold_to_use=best_fold,
+        fold_to_use=1,
     )
 
-    # --- Upload results to GCS (if on Vertex AI) ---
+    # --- Upload final results to GCS (if on Vertex AI) ---
     if not args.local_test:
-        print(f"\n  Uploading results to gs://{GCS_BUCKET}/results/")
-        upload_dir_to_gcs(save_dir, GCS_BUCKET, "results/models")
-        upload_dir_to_gcs(log_dir, GCS_BUCKET, "results/logs")
+        print(f"\n  Uploading final results to gs://{GCS_BUCKET}/results/{model_name}/")
+        upload_dir_to_gcs(save_dir, GCS_BUCKET, f"results/{model_name}/models")
+        upload_dir_to_gcs(log_dir, GCS_BUCKET, f"results/{model_name}/logs")
+
+        # Clean up GCS checkpoints after successful completion
+        print("  Cleaning up GCS checkpoints...")
+        client = storage.Client()
+        bucket = client.bucket(GCS_BUCKET)
+        blobs = list(bucket.list_blobs(prefix=GCS_CHECKPOINT_PREFIX + "/"))
+        for blob in blobs:
+            blob.delete()
+        print(f"  Deleted {len(blobs)} checkpoint files from GCS.")
 
     print(f"\n{'='*60}")
     print(f"  TRAINING COMPLETE")

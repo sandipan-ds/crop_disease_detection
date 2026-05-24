@@ -1,8 +1,8 @@
 """
 Submit a Full Custom Training Job to Vertex AI.
 
-Uses vertex_ai_training.py — full dataset (~42K train + ~19K test),
-class-balanced via oversampling, 5-fold CV, 30 epochs.
+Uses vertex_ai_training.py — full dataset (~42K train + ~9.5K val + ~9.5K test),
+class-balanced via WeightedRandomSampler + weighted CrossEntropyLoss.
 
 Usage:
     python scripts/submit_vertex_job.py
@@ -140,11 +140,16 @@ def _build_and_upload_package(project_root, bucket_name):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Submit Vertex AI Full Training Job")
+    parser.add_argument("--model", type=str, default="cnn_baseline",
+                        choices=["cnn_baseline", "resnet_50", "vgg_16", "vit"],
+                        help="Model architecture to train")
     parser.add_argument("--gpu", type=str, default="T4", choices=GPU_OPTIONS.keys())
     parser.add_argument("--region", type=str, default=REGION)
-    parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--folds", type=int, default=1,
+                        help="Number of CV folds (1=single split, 5=full CV)")
     parser.add_argument("--no-tensorboard", action="store_true",
                         help="Disable Vertex AI managed TensorBoard (logs still saved to GCS)")
     parser.add_argument("--timeout", type=int, default=86400,
@@ -154,7 +159,7 @@ def main():
 
     gpu_config = GPU_OPTIONS[args.gpu]
     image = container_uri(args.region)
-    job_name = f"crop-disease-cnn-full-{args.gpu.lower()}-{TIMESTAMP}"
+    job_name = f"crop-disease-{args.model}-{args.gpu.lower()}-{TIMESTAMP}"
 
     # Disable TensorBoard sidecar if requested (suspected crash cause)
     if args.no_tensorboard:
@@ -174,10 +179,12 @@ def main():
     print(f"  Epochs:         {args.epochs}")
     print(f"  Batch size:     {args.batch_size}")
     print(f"  Learning rate:  {args.lr}")
+    print(f"  CV folds:       {args.folds} ({'single split' if args.folds == 1 else f'{args.folds}-fold CV'})")
     print(f"  GCS bucket:     gs://{BUCKET_NAME}/")
     print(f"  TensorBoard:    {'DISABLED' if args.no_tensorboard else ('enabled' if tensorboard else 'N/A')}")
     print(f"  Timeout:        {args.timeout}s ({args.timeout//3600}h)")
-    print(f"  Dataset:        FULL (~42K train + ~19K test, class-balanced)")
+    print(f"  Model:          {args.model}")
+    print(f"  Dataset:        FULL (~42K train + ~9.5K val + ~9.5K test, class-balanced)")
     print(f"  Script:         vertex_ai_training.py (packaged as trainer.task)")
 
     if args.dry_run:
@@ -208,9 +215,11 @@ def main():
 
     job.run(
         args=[
+            "--model", args.model,
             "--epochs", str(args.epochs),
             "--batch-size", str(args.batch_size),
             "--lr", str(args.lr),
+            "--folds", str(args.folds),
         ],
         environment_variables={
             "GCS_BUCKET_NAME": BUCKET_NAME,

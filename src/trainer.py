@@ -123,13 +123,15 @@ class Trainer:
         class_names:    list of class name strings (for confusion matrix)
     """
 
-    def __init__(self, model_fn, config, log_dir, save_dir, device, class_names):
+    def __init__(self, model_fn, config, log_dir, save_dir, device, class_names,
+                 on_checkpoint=None):
         self.model_fn = model_fn
         self.config = config
         self.log_dir = log_dir
         self.save_dir = save_dir
         self.device = torch.device(device)
         self.class_names = class_names
+        self.on_checkpoint = on_checkpoint  # callback(list_of_saved_files)
 
         # Create save directory
         from pathlib import Path
@@ -271,11 +273,45 @@ class Trainer:
         print(f"  Train samples: {len(train_dataset)}")
         print(f"  Val samples:   {len(val_dataset)}")
 
-        # DataLoaders
+        # --- Compute class weights from training labels (for balanced training) ---
+        # Get labels from the training subset
+        if hasattr(train_dataset, 'dataset'):
+            # It's a Subset — get labels from the underlying dataset
+            train_labels = [train_dataset.dataset.labels[i] for i in train_dataset.indices]
+        else:
+            train_labels = train_dataset.get_labels()
+
+        train_labels_np = np.array(train_labels)
+        class_counts = np.bincount(train_labels_np, minlength=self.config["num_classes"])
+        class_counts = np.maximum(class_counts, 1)  # avoid division by zero
+
+        # WeightedRandomSampler: oversample minority classes during training
+        # Each sample gets weight = 1 / count_of_its_class
+        sample_weights = 1.0 / class_counts[train_labels_np]
+        sample_weights = torch.DoubleTensor(sample_weights)
+
+        from torch.utils.data import WeightedRandomSampler
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(train_dataset),  # one full epoch = original dataset size
+            replacement=True,
+        )
+
+        # Class-weighted CrossEntropyLoss: penalize rare-class errors more
+        class_weights = 1.0 / class_counts.astype(np.float32)
+        class_weights = class_weights / class_weights.sum() * len(class_weights)  # normalize
+        class_weights_tensor = torch.FloatTensor(class_weights).to(self.device)
+
+        # Print class balance info
+        print(f"  Class counts: min={class_counts.min()}, max={class_counts.max()}, "
+              f"mean={class_counts.mean():.0f}, median={np.median(class_counts):.0f}")
+        print(f"  Using WeightedRandomSampler + class-weighted CrossEntropyLoss")
+
+        # DataLoaders (sampler replaces shuffle for training)
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config["batch_size"],
-            shuffle=True,
+            sampler=sampler,  # oversamples minority classes
             num_workers=self.config.get("num_workers", 2),
             prefetch_factor=2 if self.config.get("num_workers", 2) > 0 else None,
             pin_memory=True,
@@ -296,7 +332,7 @@ class Trainer:
         model = self.model_fn().to(self.device)
         optimizer = self._build_optimizer(model)
         scheduler = self._build_scheduler(optimizer)
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
 
         # Move GPU augmentation pipelines to device
         gpu_train_transform = train_transform.to(self.device)
@@ -457,6 +493,17 @@ class Trainer:
                 "config": self.config,
             }, checkpoint_path)
 
+            # Sync checkpoint + best model to remote storage (GCS)
+            if self.on_checkpoint:
+                files_to_sync = [str(checkpoint_path)]
+                best_model_path = Path(self.save_dir) / f"best_model_fold_{fold}.pth"
+                if best_model_path.exists():
+                    files_to_sync.append(str(best_model_path))
+                try:
+                    self.on_checkpoint(files_to_sync)
+                except Exception as e:
+                    print(f"  [WARN] Checkpoint sync failed: {e}")
+
             # Flush TensorBoard and free memory
             writer.flush()
             gc.collect()
@@ -483,18 +530,53 @@ class Trainer:
 
     def run_cv(self, dataset, train_transform, eval_transform):
         """
-        Run full 5-fold stratified cross-validation.
+        Run stratified cross-validation with crash resume support.
+
+        - n_folds=1: single stratified 80/20 split (all classes in both sets)
+        - n_folds>=2: full k-fold stratified CV
+
+        Completed folds are saved to fold_results.json and skipped on resume.
 
         Returns: list of best metrics per fold, and averaged metrics.
         """
+        from pathlib import Path
+        from sklearn.model_selection import train_test_split
+
         n_folds = self.config["n_folds"]
         labels = dataset.get_labels()
 
-        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+        # Generate fold splits
+        if n_folds == 1:
+            # Single stratified 70/30 split — guarantees all classes in both sets
+            all_idx = list(range(len(dataset)))
+            train_idx, val_idx = train_test_split(
+                all_idx, test_size=0.3, random_state=42, stratify=labels
+            )
+            fold_splits = [(train_idx, val_idx)]
+            print(f"\n  Single stratified split: {len(train_idx)} train (70%), {len(val_idx)} val (30%)")
+        else:
+            skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+            fold_splits = list(skf.split(range(len(dataset)), labels))
+
+        # Load previously completed fold results (for crash resume)
+        fold_results_path = Path(self.save_dir) / "fold_results.json"
+        completed_folds = {}
+        if fold_results_path.exists():
+            with open(fold_results_path, "r") as f:
+                completed_folds = json.load(f)
+            print(f"\n  [RESUME] Found {len(completed_folds)} completed fold(s): {list(completed_folds.keys())}")
 
         fold_results = []
 
-        for fold, (train_idx, val_idx) in enumerate(skf.split(range(len(dataset)), labels), 1):
+        for fold, (train_idx, val_idx) in enumerate(fold_splits, 1):
+            fold_key = str(fold)
+
+            # Skip already-completed folds
+            if fold_key in completed_folds:
+                print(f"\n  [SKIP] Fold {fold} already completed (F1: {completed_folds[fold_key].get('f1_macro', 'N/A')})")
+                fold_results.append(completed_folds[fold_key])
+                continue
+
             train_subset = Subset(dataset, train_idx)
             val_subset = Subset(dataset, val_idx)
 
@@ -507,9 +589,24 @@ class Trainer:
             )
             fold_results.append(fold_metrics)
 
+            # Save completed fold results (for crash resume)
+            completed_folds[fold_key] = {
+                k: (float(v) if isinstance(v, (np.floating, float)) else v)
+                for k, v in fold_metrics.items()
+            }
+            with open(fold_results_path, "w") as f:
+                json.dump(completed_folds, f, indent=4)
+
+            # Sync fold results file to GCS
+            if self.on_checkpoint:
+                try:
+                    self.on_checkpoint([str(fold_results_path)])
+                except Exception as e:
+                    print(f"  [WARN] Fold results sync failed: {e}")
+
         # --- Compute average metrics across folds ---
         avg_metrics = {}
-        metric_keys = [k for k in fold_results[0].keys() if isinstance(fold_results[0][k], float)]
+        metric_keys = [k for k in fold_results[0].keys() if isinstance(fold_results[0][k], (float, np.floating))]
         for key in metric_keys:
             values = [f[key] for f in fold_results]
             avg_metrics[key] = {
@@ -533,7 +630,6 @@ class Trainer:
         writer.close()
 
         # --- Save CV results to JSON ---
-        from pathlib import Path
         cv_results_path = Path(self.save_dir) / "cv_results.json"
         with open(cv_results_path, "w") as f:
             json.dump({
