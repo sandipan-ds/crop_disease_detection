@@ -2,10 +2,12 @@
 Model definitions for crop disease classification.
 
 Supports:
-  - cnn_baseline: Custom 5-block CNN (~4.9M params)
-  - resnet_50:    Pretrained ResNet-50 (ImageNet) with custom head
-  - vgg_16:       Pretrained VGG-16 (ImageNet) with custom head
-  - vit:          Pretrained ViT-B/16 (ImageNet) with custom head
+  - cnn_baseline:    Custom 5-block CNN (~4.9M params)
+  - resnet_50:       Pretrained ResNet-50 (ImageNet) with custom head
+  - vgg_16:          Pretrained VGG-16 (ImageNet) with custom head
+  - vit:             Pretrained ViT-B/16 (ImageNet) with custom head
+  - efficientnet_b4: Pretrained EfficientNet-B4 (ImageNet) with custom head
+  - swin_base:       Pretrained Swin-Base (ImageNet) with custom head
 
 Usage:
     model = get_model("resnet_50", num_classes=102)
@@ -187,6 +189,69 @@ class ViTTransfer(nn.Module):
         return self.backbone(x)
 
 
+class EfficientNetB4Transfer(nn.Module):
+    """EfficientNet-B4 with frozen features + custom classifier head."""
+
+    def __init__(self, num_classes=102, dropout_fc=0.5, freeze_backbone=True):
+        super().__init__()
+        self.backbone = models.efficientnet_b4(weights=models.EfficientNet_B4_Weights.IMAGENET1K_V1)
+
+        # Freeze all backbone layers
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        # Replace classifier head
+        in_features = self.backbone.classifier[1].in_features  # 1792
+        self.backbone.classifier = nn.Sequential(
+            nn.Dropout(p=dropout_fc),
+            nn.Linear(in_features, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_fc * 0.5),
+            nn.Linear(512, num_classes),
+        )
+
+        # Unfreeze last 2 blocks of features for fine-tuning
+        if freeze_backbone:
+            for param in self.backbone.features[-2:].parameters():
+                param.requires_grad = True
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
+class SwinBaseTransfer(nn.Module):
+    """Swin Transformer Base with frozen backbone + custom head."""
+
+    def __init__(self, num_classes=102, dropout_fc=0.5, freeze_backbone=True):
+        super().__init__()
+        self.backbone = models.swin_b(weights=models.Swin_B_Weights.IMAGENET1K_V1)
+
+        # Freeze all layers
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        # Replace classification head
+        in_features = self.backbone.head.in_features  # 1024
+        self.backbone.head = nn.Sequential(
+            nn.Linear(in_features, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout_fc),
+            nn.Linear(512, num_classes),
+        )
+
+        # Unfreeze last 2 stages for fine-tuning
+        if freeze_backbone:
+            for param in self.backbone.features[-2:].parameters():
+                param.requires_grad = True
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
 # =========================================================
 # UNIFIED MODEL FACTORY
 # =========================================================
@@ -196,6 +261,8 @@ MODEL_REGISTRY = {
     "resnet_50": "ResNet50Transfer",
     "vgg_16": "VGG16Transfer",
     "vit": "ViTTransfer",
+    "efficientnet_b4": "EfficientNetB4Transfer",
+    "swin_base": "SwinBaseTransfer",
 }
 
 
@@ -204,7 +271,8 @@ def get_model(model_name, num_classes=102, dropout_fc=0.5, **kwargs):
     Unified factory to create any supported model by name.
 
     Args:
-        model_name: One of 'cnn_baseline', 'resnet_50', 'vgg_16', 'vit'
+        model_name: One of 'cnn_baseline', 'resnet_50', 'vgg_16', 'vit',
+                    'efficientnet_b4', 'swin_base'
         num_classes: Number of output classes
         dropout_fc: Dropout rate for FC layers
 
@@ -219,6 +287,11 @@ def get_model(model_name, num_classes=102, dropout_fc=0.5, **kwargs):
         return VGG16Transfer(num_classes=num_classes, dropout_fc=dropout_fc)
     elif model_name == "vit":
         return ViTTransfer(num_classes=num_classes, dropout_fc=dropout_fc)
+    elif model_name == "efficientnet_b4":
+        return EfficientNetB4Transfer(num_classes=num_classes, dropout_fc=dropout_fc)
+    elif model_name == "swin_base":
+        return SwinBaseTransfer(num_classes=num_classes, dropout_fc=dropout_fc)
     else:
         raise ValueError(f"Unknown model: {model_name}. Choose from {list(MODEL_REGISTRY.keys())}")
+
 
