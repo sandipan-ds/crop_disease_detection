@@ -1,0 +1,18 @@
+# Only upload what's needed for the Docker build
+.venv/
+data/
+notebook/
+results/
+models/
+runs/
+reports/
+business_objective/
+project_document/
+docs/
+.git/
+*.pth
+*.pt
+*.csv
+*.log
+*.pkl
+*.npy

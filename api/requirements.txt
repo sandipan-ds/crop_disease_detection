@@ -1,0 +1,23 @@
+# ─── FastAPI Backend Dependencies ───
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# ─── ML / Inference ───
+torch>=2.1.0
+torchvision>=0.16.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# ─── GradCAM (explainability) ───
+grad-cam>=1.4.8
+
+# ─── Rate Limiting ───
+slowapi>=0.1.9
+
+# ─── Utilities ───
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# ─── Google Cloud Storage (download checkpoints) ───
+google-cloud-storage>=2.10.0

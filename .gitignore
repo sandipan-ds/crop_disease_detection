@@ -86,4 +86,19 @@ gcs_service_key/
 # Project Documentation
 project_document/
 
-results/ 
+results/
+
+# ─── Frontend (node_modules is huge) ───
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# ─── API / Deployment ───
+env.yaml
+*.tar.gz
+
+# ─── Docker ───
+*.dockerignore
+
+# ─── Torch cache (pretrained weights) ───
+*.cache/
