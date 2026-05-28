@@ -12,6 +12,7 @@ import io
 import time
 import base64
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 import numpy as np
@@ -42,17 +43,31 @@ limiter = Limiter(key_func=get_remote_address)
 inference_service: InferenceService = None
 
 
+def _load_models_bg():
+    """Background thread to download + load model checkpoints."""
+    global inference_service
+    try:
+        # Step 1: Download checkpoints from GCS
+        from api.download_checkpoints import download_checkpoints
+        download_checkpoints()
+
+        # Step 2: Load models from local disk
+        inference_service = InferenceService(
+            checkpoints_dir=CHECKPOINTS_DIR,
+            label_mapping_path=LABEL_MAPPING_PATH,
+        )
+        inference_service.load_all_models()
+        logger.info("All models loaded successfully.")
+    except Exception as e:
+        logger.error(f"Model loading failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load models at startup, cleanup at shutdown."""
-    global inference_service
-    logger.info("Starting model loading...")
-    inference_service = InferenceService(
-        checkpoints_dir=CHECKPOINTS_DIR,
-        label_mapping_path=LABEL_MAPPING_PATH,
-    )
-    inference_service.load_all_models()
-    logger.info("API ready.")
+    """Start server immediately; load models in background."""
+    logger.info("Starting API server...")
+    thread = threading.Thread(target=_load_models_bg, daemon=True)
+    thread.start()
     yield
     logger.info("Shutting down...")
 
@@ -160,6 +175,12 @@ async def predict(
         )
 
     if inference_service and model_name not in inference_service.models:
+        loaded = list(inference_service.models.keys())
+        if not loaded:
+            raise HTTPException(
+                status_code=503,
+                detail="Models are still downloading/loading from GCS. Please retry in 30-60s.",
+            )
         raise HTTPException(
             status_code=404,
             detail=f"Model '{model_name}' checkpoint not available on this server.",
@@ -206,6 +227,12 @@ async def explain(
         raise HTTPException(status_code=400, detail=f"Unknown model '{model_name}'.")
 
     if inference_service and model_name not in inference_service.models:
+        loaded = list(inference_service.models.keys())
+        if not loaded:
+            raise HTTPException(
+                status_code=503,
+                detail="Models are still downloading/loading from GCS. Please retry in 30-60s.",
+            )
         raise HTTPException(status_code=404, detail=f"Model '{model_name}' not available.")
 
     # Read image

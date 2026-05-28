@@ -30,6 +30,5 @@ ENV GCS_BUCKET=crop-disease-detection-1
 ENV MODELS_TO_DOWNLOAD=resnet_50,vit,mobilenet_v3,swin_base
 ENV CHECKPOINTS_DIR=results
 
-# Startup: download checkpoints from GCS, then launch API
-CMD python -m api.download_checkpoints && \
-    uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 1
+# Start server immediately; models download/load lazily on first request
+CMD uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 1

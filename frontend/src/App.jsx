@@ -3,8 +3,9 @@ import { fetchModels, predict, explain } from "./api";
 import ImageUpload from "./components/ImageUpload";
 import ModelSelector from "./components/ModelSelector";
 import ResultsPanel from "./components/ResultsPanel";
+import ComparePanel from "./components/ComparePanel";
 import Header from "./components/Header";
-import { Loader2 } from "lucide-react";
+import { Loader2, Scan, GitCompare } from "lucide-react";
 
 function App() {
   const [models, setModels] = useState([]);
@@ -16,6 +17,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [showExplain, setShowExplain] = useState(false);
   const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState("predict");
 
   useEffect(() => {
     fetchModels()
@@ -40,6 +42,7 @@ function App() {
     setError(null);
     setResult(null);
     setHeatmap(null);
+    setShowExplain(false);
     try {
       const res = await predict(imageFile, selectedModel);
       setResult(res);
@@ -79,10 +82,101 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-emerald-50">
       <Header />
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column — Upload + Controls */}
-          <div className="space-y-6">
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Tab Navigation */}
+        <div className="flex gap-2 mb-8">
+          <button
+            onClick={() => setActiveTab("predict")}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${
+              activeTab === "predict"
+                ? "bg-emerald-600 text-white shadow-md"
+                : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
+            }`}
+          >
+            <Scan className="w-4 h-4" />
+            Predict & Explain
+          </button>
+          <button
+            onClick={() => setActiveTab("compare")}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${
+              activeTab === "compare"
+                ? "bg-violet-600 text-white shadow-md"
+                : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
+            }`}
+          >
+            <GitCompare className="w-4 h-4" />
+            Compare Models
+          </button>
+        </div>
+
+        {/* Predict & Explain Tab */}
+        {activeTab === "predict" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Left Column — Upload + Controls */}
+            <div className="space-y-6">
+              <ImageUpload
+                onImageSelect={handleImageSelect}
+                imagePreview={imagePreview}
+                onReset={handleReset}
+              />
+
+              {imageFile && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
+                  <ModelSelector
+                    models={models}
+                    selected={selectedModel}
+                    onChange={setSelectedModel}
+                  />
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handlePredict}
+                      disabled={loading}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
+                    >
+                      {loading && !showExplain ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : null}
+                      Predict
+                    </button>
+
+                    <button
+                      onClick={handleExplain}
+                      disabled={loading}
+                      className="flex-1 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
+                    >
+                      {loading && showExplain ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : null}
+                      Explain (GradCAM)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+            </div>
+
+            {/* Right Column — Results */}
+            <div>
+              {result && (
+                <ResultsPanel
+                  result={result}
+                  heatmap={heatmap}
+                  imagePreview={imagePreview}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Compare Tab */}
+        {activeTab === "compare" && (
+          <div className="max-w-4xl mx-auto space-y-6">
             <ImageUpload
               onImageSelect={handleImageSelect}
               imagePreview={imagePreview}
@@ -90,57 +184,14 @@ function App() {
             />
 
             {imageFile && (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
-                <ModelSelector
-                  models={models}
-                  selected={selectedModel}
-                  onChange={setSelectedModel}
-                />
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={handlePredict}
-                    disabled={loading}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
-                  >
-                    {loading && !showExplain ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : null}
-                    Predict
-                  </button>
-
-                  <button
-                    onClick={handleExplain}
-                    disabled={loading}
-                    className="flex-1 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
-                  >
-                    {loading && showExplain ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : null}
-                    Explain (GradCAM)
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-                {error}
-              </div>
-            )}
-          </div>
-
-          {/* Right Column — Results */}
-          <div>
-            {result && (
-              <ResultsPanel
-                result={result}
-                heatmap={heatmap}
+              <ComparePanel
+                models={models}
+                imageFile={imageFile}
                 imagePreview={imagePreview}
               />
             )}
           </div>
-        </div>
+        )}
       </main>
 
       <footer className="text-center py-6 text-gray-400 text-sm">
