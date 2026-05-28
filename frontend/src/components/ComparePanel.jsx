@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { explain } from "../api";
 import { Loader2, GitCompare } from "lucide-react";
 
@@ -7,6 +7,20 @@ export default function ComparePanel({ models, imageFile, imagePreview }) {
   const [results, setResults] = useState([null, null, null]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  const modelOptions = useMemo(() => models.map((m) => m.model_name), [models]);
+
+  useEffect(() => {
+    if (modelOptions.length === 0) return;
+    setSelectedModels((current) => {
+      if (current.some(Boolean)) return current;
+      return [
+        modelOptions[0] || "",
+        modelOptions[1] || "",
+        modelOptions[2] || "",
+      ];
+    });
+  }, [modelOptions]);
 
   const handleModelChange = (idx, value) => {
     const updated = [...selectedModels];
@@ -22,6 +36,10 @@ export default function ComparePanel({ models, imageFile, imagePreview }) {
     }
     if (!imageFile) {
       setError("Upload an image first.");
+      return;
+    }
+    if (new Set(modelsToCompare).size !== modelsToCompare.length) {
+      setError("Choose different models for each comparison slot.");
       return;
     }
 
@@ -72,7 +90,11 @@ export default function ComparePanel({ models, imageFile, imagePreview }) {
                   {idx === 2 ? "(Optional)" : "Select model..."}
                 </option>
                 {models.map((m) => (
-                  <option key={m.model_name} value={m.model_name}>
+                  <option
+                    key={m.model_name}
+                    value={m.model_name}
+                    disabled={selectedModels.includes(m.model_name) && selectedModels[idx] !== m.model_name}
+                  >
                     {m.display_name}
                   </option>
                 ))}

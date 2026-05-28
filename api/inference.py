@@ -32,40 +32,10 @@ IMAGE_SIZE = 224
 
 # ─── Model Metadata ───
 MODEL_METADATA = {
-    "cnn_baseline": {
-        "display_name": "CNN Baseline",
-        "type": "Custom 5-block CNN",
-        "params": "~7.5M",
-        "speed": "fast",
-    },
     "resnet_50": {
         "display_name": "ResNet-50",
         "type": "Transfer Learning",
         "params": "~25.6M",
-        "speed": "medium",
-    },
-    "resnet_152": {
-        "display_name": "ResNet-152",
-        "type": "Transfer Learning",
-        "params": "~60.2M",
-        "speed": "slow",
-    },
-    "vgg_16": {
-        "display_name": "VGG-16",
-        "type": "Transfer Learning",
-        "params": "~138M",
-        "speed": "slow",
-    },
-    "vit": {
-        "display_name": "ViT (B/16)",
-        "type": "Transfer Learning (Transformer)",
-        "params": "~86M",
-        "speed": "medium",
-    },
-    "efficientnet_b4": {
-        "display_name": "EfficientNet-B4",
-        "type": "Transfer Learning",
-        "params": "~19M",
         "speed": "medium",
     },
     "mobilenet_v3": {
@@ -73,12 +43,6 @@ MODEL_METADATA = {
         "type": "Transfer Learning",
         "params": "~5.4M",
         "speed": "fast",
-    },
-    "swin_base": {
-        "display_name": "Swin-Base",
-        "type": "Transfer Learning (Transformer)",
-        "params": "~88M",
-        "speed": "medium",
     },
 }
 
@@ -112,6 +76,7 @@ class InferenceService:
             model = get_model(model_name, num_classes=NUM_CLASSES, pretrained=False)
             checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             model.load_state_dict(checkpoint["model_state_dict"])
+            self._disable_inplace_ops(model)
             model.to(self.device)
             model.eval()
 
@@ -137,6 +102,11 @@ class InferenceService:
             if self.load_model(model_name):
                 loaded += 1
         logger.info(f"Loaded {loaded}/{len(MODEL_METADATA)} models")
+
+    def _disable_inplace_ops(self, model):
+        for module in model.modules():
+            if hasattr(module, "inplace"):
+                module.inplace = False
 
     def get_available_models(self) -> list[dict]:
         """Return metadata for all loaded models."""
@@ -229,29 +199,19 @@ class InferenceService:
             pred_idx = logits.argmax(dim=1).item()
 
         # Generate GradCAM
-        cam = GradCAM(model=model, target_layers=[target_layer], reshape_transform=reshape_transform)
         targets = [ClassifierOutputTarget(pred_idx)]
-        grayscale_cam = cam(input_tensor=input_tensor, targets=targets)
+        with GradCAM(model=model, target_layers=[target_layer], reshape_transform=reshape_transform) as cam:
+            grayscale_cam = cam(input_tensor=input_tensor, targets=targets)
 
         return grayscale_cam[0, :]
 
     def _get_target_layer(self, model_name: str, model):
         """Get the appropriate target layer for GradCAM."""
         try:
-            if model_name in ("resnet_50", "resnet_152"):
+            if model_name == "resnet_50":
                 return model.backbone.layer4[-1]
-            elif model_name == "vgg_16":
-                return model.backbone.features[-1]
-            elif model_name == "efficientnet_b4":
-                return model.backbone.features[-1]
             elif model_name == "mobilenet_v3":
                 return model.backbone.features[-1]
-            elif model_name == "swin_base":
-                return model.backbone.features[-1][-1].norm2
-            elif model_name == "vit":
-                return model.backbone.encoder.layers[-1].ln_1
-            elif model_name == "cnn_baseline":
-                return model.features[-1]
             else:
                 return None
         except Exception:
@@ -259,16 +219,4 @@ class InferenceService:
 
     def _get_reshape_transform(self, model_name: str):
         """Get reshape transform for transformer models."""
-        if model_name == "vit":
-            def reshape_vit(tensor, height=14, width=14):
-                result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
-                return result.permute(0, 3, 1, 2)
-            return reshape_vit
-        elif model_name == "swin_base":
-            def reshape_swin(tensor, height=7, width=7):
-                if len(tensor.shape) == 4:
-                    return tensor.permute(0, 3, 1, 2)
-                result = tensor.reshape(tensor.size(0), height, width, tensor.size(2))
-                return result.permute(0, 3, 1, 2)
-            return reshape_swin
         return None

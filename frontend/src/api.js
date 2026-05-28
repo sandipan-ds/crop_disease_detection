@@ -1,10 +1,12 @@
 import axios from "axios";
 
-const API_BASE = "https://crop-disease-api-1049249498032.us-central1.run.app";
+export const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://crop-disease-api-1049249498032.us-central1.run.app";
 
 const api = axios.create({
   baseURL: API_BASE,
-  timeout: 120000, // 2 min (cold start + model loading)
+  timeout: 300000, // 5 min (Cloud Run cold start + model loading + GradCAM)
 });
 
 export async function fetchModels() {

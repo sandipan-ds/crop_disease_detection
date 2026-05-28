@@ -25,6 +25,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from api.inference import InferenceService, MODEL_METADATA
+from api.download_checkpoints import download_checkpoints
 
 # ─── Logging ───
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -41,25 +42,36 @@ limiter = Limiter(key_func=get_remote_address)
 
 # ─── Inference Service (global) ───
 inference_service: InferenceService = None
+_load_error: str = None
 
 
 def _load_models_bg():
     """Background thread to download + load model checkpoints."""
-    global inference_service
+    global inference_service, _load_error
+    _load_error = None
+    print("[_load_models_bg] Thread started", flush=True)
     try:
-        # Step 1: Download checkpoints from GCS
-        from api.download_checkpoints import download_checkpoints
+        print("[_load_models_bg] Calling download_checkpoints()...", flush=True)
         download_checkpoints()
+        print("[_load_models_bg] Download finished.", flush=True)
 
-        # Step 2: Load models from local disk
+        print("[_load_models_bg] Creating InferenceService...", flush=True)
         inference_service = InferenceService(
             checkpoints_dir=CHECKPOINTS_DIR,
             label_mapping_path=LABEL_MAPPING_PATH,
         )
+        print("[_load_models_bg] Loading all models...", flush=True)
         inference_service.load_all_models()
-        logger.info("All models loaded successfully.")
+        print(f"[_load_models_bg] Done. Loaded {len(inference_service.models)} models.", flush=True)
+
+        if len(inference_service.models) == 0:
+            _load_error = "No models loaded — checkpoints may be missing or corrupted."
+            print(f"[_load_models_bg] WARNING: {_load_error}", flush=True)
     except Exception as e:
-        logger.error(f"Model loading failed: {e}")
+        _load_error = str(e)
+        print(f"[_load_models_bg] FAILED: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
 
 
 @asynccontextmanager
@@ -135,18 +147,23 @@ async def read_image(file: UploadFile) -> Image.Image:
 async def health_check():
     """Liveness probe for Cloud Run."""
     loaded_models = list(inference_service.models.keys()) if inference_service else []
+    status = "healthy" if len(loaded_models) > 0 else ("error" if _load_error else "loading")
     return {
-        "status": "healthy",
+        "status": status,
         "models_loaded": len(loaded_models),
+        "models": loaded_models,
         "device": str(inference_service.device) if inference_service else "N/A",
+        "error": _load_error,
     }
 
 
 @app.get("/models")
 async def list_models():
     """List all available models with metadata and performance metrics."""
+    if _load_error and not inference_service:
+        raise HTTPException(status_code=503, detail=f"Service failed to start: {_load_error}")
     if not inference_service:
-        raise HTTPException(status_code=503, detail="Service not ready.")
+        raise HTTPException(status_code=503, detail="Service is still loading models. Please retry in 30-60s.")
     return {"models": inference_service.get_available_models()}
 
 
@@ -173,6 +190,10 @@ async def predict(
             status_code=400,
             detail=f"Unknown model '{model_name}'. Available: {list(MODEL_METADATA.keys())}",
         )
+
+    if not inference_service:
+        detail = f"Service failed to start: {_load_error}" if _load_error else "Models are still downloading/loading from GCS. Please retry in 30-60s."
+        raise HTTPException(status_code=503, detail=detail)
 
     if inference_service and model_name not in inference_service.models:
         loaded = list(inference_service.models.keys())
@@ -225,6 +246,10 @@ async def explain(
 
     if model_name not in MODEL_METADATA:
         raise HTTPException(status_code=400, detail=f"Unknown model '{model_name}'.")
+
+    if not inference_service:
+        detail = f"Service failed to start: {_load_error}" if _load_error else "Models are still downloading/loading from GCS. Please retry in 30-60s."
+        raise HTTPException(status_code=503, detail=detail)
 
     if inference_service and model_name not in inference_service.models:
         loaded = list(inference_service.models.keys())

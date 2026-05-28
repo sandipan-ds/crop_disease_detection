@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { fetchModels, predict, explain } from "./api";
+import { API_BASE, fetchModels, predict, explain } from "./api";
 import ImageUpload from "./components/ImageUpload";
 import ModelSelector from "./components/ModelSelector";
 import ResultsPanel from "./components/ResultsPanel";
@@ -17,15 +17,40 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [showExplain, setShowExplain] = useState(false);
   const [error, setError] = useState(null);
+  const [loadingModels, setLoadingModels] = useState(true);
   const [activeTab, setActiveTab] = useState("predict");
 
   useEffect(() => {
-    fetchModels()
-      .then((m) => {
-        setModels(m);
-        if (m.length > 0) setSelectedModel(m[0].model_name);
-      })
-      .catch(() => setError("Could not connect to API. It may be cold-starting — try again in 30s."));
+    let interval;
+
+    const tryLoad = () => {
+      fetchModels()
+        .then((m) => {
+          if (m.length > 0) {
+            setModels(m);
+            setSelectedModel((current) => current || m[0].model_name);
+            setLoadingModels(false);
+            setError(null);
+            if (interval) clearInterval(interval);
+          } else {
+            setError("Backend warming up — downloading models from GCS. This takes ~1-2 minutes on first visit.");
+          }
+        })
+        .catch((err) => {
+          if (err.response?.status === 503) {
+            setError("Backend warming up — downloading models from GCS. This takes ~1-2 minutes on first visit.");
+          } else {
+            setError(`Could not connect to API at ${API_BASE}.`);
+            setLoadingModels(false);
+            if (interval) clearInterval(interval);
+          }
+        });
+    };
+
+    tryLoad();
+    interval = setInterval(tryLoad, 10000); // Poll every 10s
+
+    return () => clearInterval(interval);
   }, []);
 
   const handleImageSelect = useCallback((file) => {
@@ -155,8 +180,13 @@ function App() {
               )}
 
               {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-                  {error}
+                <div className={`border px-4 py-4 rounded-xl text-sm flex items-start gap-3 ${
+                  loadingModels
+                    ? "bg-blue-50 border-blue-200 text-blue-700"
+                    : "bg-red-50 border-red-200 text-red-700"
+                }`}>
+                  {loadingModels && <Loader2 className="w-5 h-5 animate-spin shrink-0 mt-0.5" />}
+                  <span>{error}</span>
                 </div>
               )}
             </div>
