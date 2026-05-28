@@ -222,8 +222,9 @@ def main():
     parser.add_argument("--local-test", action="store_true",
                         help="Run locally instead of on Vertex AI (uses local data)")
     parser.add_argument("--model", type=str, default="cnn_baseline",
-                        choices=["cnn_baseline", "resnet_50", "vgg_16", "vit",
-                                 "efficientnet_b4", "swin_base"],
+                        choices=["cnn_baseline", "resnet_50", "resnet_152",
+                                 "vgg_16", "vit", "efficientnet_b4",
+                                 "mobilenet_v3", "swin_base"],
                         help="Model architecture to train")
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
     parser.add_argument("--batch-size", type=int, default=None, help="Override batch size")
