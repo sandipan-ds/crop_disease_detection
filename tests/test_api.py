@@ -115,19 +115,17 @@ class TestPredict:
         assert len(data["top_k"]) <= 3
 
     def test_predict_large_image(self, client_loaded):
-        """An image > 10MB should be rejected with 400."""
-        # Create a large image (~15MB uncompressed)
-        img = Image.new("RGB", (5000, 5000), color=(120, 180, 90))
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=95)
-        image_bytes = buf.getvalue()
+        """An image > MAX_IMAGE_SIZE_MB should be rejected with 400."""
+        from unittest.mock import patch
+        import api.main as main_module
 
-        resp = client_loaded.post(
-            "/predict",
-            files={"image": ("huge.jpg", image_bytes, "image/jpeg")},
-            data={"model_name": "resnet_50"},
-        )
-        # Should be rejected for size
+        image_bytes, content_type = _make_image_bytes()
+        with patch.object(main_module, "MAX_IMAGE_SIZE_MB", 0):  # Any image is "too large"
+            resp = client_loaded.post(
+                "/predict",
+                files={"image": ("huge.jpg", image_bytes, content_type)},
+                data={"model_name": "resnet_50"},
+            )
         assert resp.status_code == 400
         assert "too large" in resp.json()["detail"].lower() or "max" in resp.json()["detail"].lower()
 
