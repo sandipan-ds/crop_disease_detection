@@ -1,0 +1,65 @@
+# ─── Data (huge, not needed in container) ───
+data/
+notebook/
+reports/
+business_objective/
+project_document/
+docs/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# ─── Model checkpoints (downloaded from GCS at runtime) ───
+results/
+models/
+
+# ─── Training artifacts ───
+runs/
+*.pth
+*.pt
+*.onnx
+
+# ─── Python / venv ───
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# ─── Git ───
+.git/
+.gitignore
+
+# ─── IDE ───
+.vscode/
+.idea/
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+
+# ─── Secrets ───
+.env
+.env.local
+*.env.*.local
+gcs_service_key/
+
+# ─── Firebase ───
+.firebase/
+.firebaserc
+firebase.json
+firebase-debug.log
+
+# ─── Misc ───
+*.log
+*.csv
+*.pkl
+*.npy
+*.npz
+*.tar.gz
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/

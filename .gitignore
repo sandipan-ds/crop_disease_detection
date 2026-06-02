@@ -85,17 +85,31 @@ gcs_service_key/
 
 results/
 
-# ─── Frontend (node_modules is huge) ───
+# ─── Frontend build artifacts ───
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+frontend/.env.local
+frontend/.env.*.local
 
-# ─── API / Deployment ───
+# ─── Deployment artifacts ───
 env.yaml
 *.tar.gz
 
-# ─── Docker ───
-*.dockerignore
+# ─── Firebase (CLI handles these) ───
+.firebase/
+.firebaserc
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
 
-# ─── Torch cache (pretrained weights) ───
+# ─── Docker build artifacts ───
+
+# ─── Caches ───
 *.cache/
+.pytest_cache/
+.mypy_cache/
+
+# ─── Test coverage ───
+htmlcov/
+.coverage
