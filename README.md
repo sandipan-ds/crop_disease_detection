@@ -2,6 +2,8 @@
 
 [![Frontend](https://img.shields.io/badge/Frontend-Live-green)](https://crop-disease-detection-30ba1.web.app)
 [![Backend](https://img.shields.io/badge/API-Live-blue)](https://crop-disease-api-1049249498032.us-central1.run.app/docs)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-blueviolet)](.github/workflows/)
+[![DVC](https://img.shields.io/badge/DVC-GCS%20Remote-orange)](data/dvc/)
 
 > **Live Demo:** [https://crop-disease-detection-30ba1.web.app](https://crop-disease-detection-30ba1.web.app)
 >
@@ -78,28 +80,47 @@ crop_disease_detection/
 ├── configs/
 │   └── label_mapping.json        # 102-class label mapping
 │
+├── data/
+│   ├── dvc/                      # DVC metadata vault (Git-tracked .dvc recipes)
+│   ├── processed/                # Renamed + organized images (DVC-tracked)
+│   │   ├── combined_train/
+│   │   └── combined_test/
+│   ├── csv/                      # Generated manifests (DVC-tracked)
+│   │   ├── train.csv
+│   │   └── test.csv
+│   └── original/                 # Raw source datasets (Git-ignored, not DVC-tracked)
+│
 ├── notebook/
-│   └── crop_disease_detection.ipynb  # EDA, data prep, evaluation
+│   └── crop_disease_detection.ipynb  # EDA, model evaluation, PAC analysis
 │
 ├── scripts/
+│   ├── prepare_data.py           # Automated data prep (rename → CSV → label map)
+│   ├── validate_data.py          # Lightweight data validation checks
+│   ├── upload_to_gcs.py          # Upload datasets to GCS bucket
 │   ├── submit_vertex_job.py      # Launch Vertex AI training
 │   └── vertex_ai_training.py     # Cloud training script
 │
 ├── src/
+│   ├── dataset.py                # PyTorch Dataset from CSV manifests
 │   ├── model.py                  # 8 model architectures (CNN, ResNet, ViT, etc.)
+│   ├── augmentations.py          # GPU-accelerated torchvision v2 transforms
 │   └── training/
-│       └── trainer.py            # Training loop with 5-fold CV
+│       └── trainer.py            # Training loop with checkpointing
+│
+├── configs/
+│   └── label_mapping.json        # 102-class label mapping
+│
+├── tests/                        # Pytest suite for FastAPI backend
 │
 ├── project_document/
-│   ├── PROJECT_DOCUMENT.md       # Complete project guide
-│   ├── android_app_deployment_guide.md
-│   ├── must_practice_topics.md
-│   └── vertex_ai_training_guide.md
+│   └── documentation/            # Modular docs (INDEX.md + per-section guides)
 │
+├── .github/workflows/            # CI/CD: lint, test, build, deploy
+│
+├── dvc.yaml                      # DVC pipeline: data preparation stage
+├── Makefile                      # Convenient targets: make prepare, train, deploy
 ├── .firebaserc                   # Firebase project alias
 ├── firebase.json                 # Firebase Hosting config
-├── cloudbuild.yaml               # Cloud Build configuration
-├── env.yaml                      # Cloud Run environment variables
 ├── Dockerfile                    # Vertex AI training container
 ├── requirements.txt              # Python dependencies
 └── README.md
@@ -123,6 +144,8 @@ crop_disease_detection/
 | **Cloud Frontend** | Firebase Hosting | Free static hosting with CDN |
 | **Storage** | Google Cloud Storage | Dataset and model checkpoints |
 | **Experiment Tracking** | TensorBoard | Real-time metric visualization |
+| **Data Versioning** | DVC + GCS | Reproducible datasets and model checkpoints |
+| **CI/CD** | GitHub Actions | Automated test, build, deploy on push |
 | **Dataset** | PlantVillage + plant_dataset_2 | ~61,000 labeled images, 102 classes |
 
 ---
@@ -152,6 +175,8 @@ All models trained with ImageNet pretrained weights + custom classification head
 - **Cold-start handling** — frontend polls backend and shows loading state
 - **Scale-to-zero backend** — Cloud Run costs minimized when idle
 - **Rate limiting** — 30/min predict, 10/min explain
+- **DVC data versioning** — datasets and models tracked with GCS remote
+- **CI/CD pipeline** — GitHub Actions for automated test, build, and deploy
 
 ## API Endpoints
 
@@ -229,9 +254,23 @@ gcloud run deploy crop-disease-api \
     --region us-central1
 ```
 
+### Data Preparation (Automated)
+
+```cmd
+# One-command data prep: rename images → generate CSVs → build label mapping
+make prepare
+
+# Validate manifests and image paths
+make validate
+```
+
 ### Training on Vertex AI
+
 ```bash
 # Submit training job
+make train
+
+# Or directly:
 python scripts/submit_vertex_job.py --config configs/training_config.yaml
 ```
 

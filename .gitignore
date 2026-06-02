@@ -4,7 +4,15 @@
 # ─── Data & project docs (too large / unnecessary for git) ───
 business_objective/
 project_document/
-data/
+
+# Raw source datasets — never commit, never DVC-track (too large / external)
+data/original/
+
+# Processed datasets and CSVs — DVC manages content, Git tracks .dvc recipes
+data/processed/*
+!data/processed/*.dvc
+data/csv/*
+!data/csv/*.dvc
 
 # ─── Model weights ───
 models/saved/*.pth
@@ -59,14 +67,6 @@ runs/
 
 # ─── GCP credentials (NEVER commit) ───
 scripts/*.json
-
-# ─── Large CSVs (generated, not source) ───
-notebook/train.csv
-notebook/val.csv
-notebook/test.csv
-notebook/test_original.csv
-notebook/test_new.csv
-notebook/split_report.txt
 
 # ─── Temp files from label encoding cell ───
 notebook/label_encoding_cell.py

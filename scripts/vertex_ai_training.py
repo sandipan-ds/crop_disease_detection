@@ -265,8 +265,8 @@ def main():
     if args.local_test:
         # Use local data paths
         data_root = str(PROJECT_ROOT)
-        train_csv = str(PROJECT_ROOT / "notebook" / "train.csv")
-        test_csv = str(PROJECT_ROOT / "notebook" / "test.csv")
+        train_csv = str(PROJECT_ROOT / "data" / "csv" / "train.csv")
+        test_csv = str(PROJECT_ROOT / "data" / "csv" / "test.csv")
         log_dir = str(PROJECT_ROOT / "runs" / model_name)
         save_dir = str(PROJECT_ROOT / "models" / "saved" / model_name)
     else:
