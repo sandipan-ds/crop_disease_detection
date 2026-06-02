@@ -1,95 +1,108 @@
-# 🌿 Crop Disease Detection — Computer Vision for Smart Agriculture
+# 🌿 Crop Disease Detection — End-to-End ML Platform
+
+[![Frontend](https://img.shields.io/badge/Frontend-Live-green)](https://crop-disease-detection-30ba1.web.app)
+[![Backend](https://img.shields.io/badge/API-Live-blue)](https://crop-disease-api-1049249498032.us-central1.run.app/docs)
+
+> **Live Demo:** [https://crop-disease-detection-30ba1.web.app](https://crop-disease-detection-30ba1.web.app)
+>
+> **API Docs:** [https://crop-disease-api-1049249498032.us-central1.run.app/docs](https://crop-disease-api-1049249498032.us-central1.run.app/docs)
 
 ## Business Objective
 
 ### Executive Problem Statement
 
-Global agriculture faces massive challenges as plant diseases and pests threaten food security and crop yields, with diseases contributing to massive yield losses annually. Traditional manual monitoring of crop health relies on farmers visually inspecting fields — a process that is labor-intensive, prone to human error, and often catches outbreaks too late. Waiting too long to take action leads to devastating crop loss or the indiscriminate, environmentally harmful overuse of chemical pesticides.
+Global agriculture faces massive challenges as plant diseases and pests threaten food security and crop yields. Traditional manual monitoring relies on farmers visually inspecting fields — a process that is labor-intensive, prone to human error, and often catches outbreaks too late.
 
 ### Project Goal
 
-The objective of this project is to develop a **deep learning-based image classifier** utilizing **Computer Vision**. The model must analyze images of plant leaves to detect early signs of disease, enabling timely, targeted interventions and supporting precision agriculture objectives.
+Develop a **deep learning-based image classifier** that analyzes plant leaf images to detect early signs of disease across **102 crop disease classes** and **20 plant species**, enabling timely, targeted interventions.
 
 ### Strategic Vision
 
-Democratize expert agricultural knowledge by giving local farmers instant, smartphone-accessible diagnostic capabilities. Early and accurate detection mitigates damage and ensures sustainable food production.
+Democratize expert agricultural knowledge by giving farmers instant, smartphone-accessible diagnostic capabilities with **explainable AI** (GradCAM heatmaps) and **multi-model comparison**.
 
 ### Key Performance Indicators
 
 | Metric | Why It Matters |
 |---|---|
-| **Accuracy** | Overall correctness of predictions across all 38 disease classes |
+| **Accuracy** | Overall correctness across all 102 disease classes |
 | **Precision** | Minimize false positives — avoid unnecessary pesticide application |
-| **Recall** ⭐ | **Most critical** — a false negative (missed disease) allows infection to spread across the field |
-| **F1-Score** | Harmonic mean balancing Precision and Recall |
-
-### User Personas
-
-| Persona | Primary Need | System Interaction |
-|---|---|---|
-| **Local Farmer** | Fast, reliable diagnosis without expert botanical knowledge | Captures a photo of a suspicious leaf via mobile → receives instant AI diagnosis and treatment recommendation |
-| **Agronomist** | Scalable monitoring of large geographic farming zones | Uses aggregated model predictions to track disease outbreak patterns across regions |
-| **ML Engineer** | High-quality image preprocessing and robust model generalization | Augments limited image datasets and tunes CNNs to handle varying field lighting conditions |
+| **Recall** ⭐ | **Most critical** — a false negative allows infection to spread |
+| **F1-Score (macro)** | Balances Precision and Recall; treats all classes equally |
 
 ---
+
+## Architecture
+
+```
+User Browser
+    |
+    v
+Firebase Hosting (React Frontend)
+    |  https://crop-disease-detection-30ba1.web.app
+    v
+Cloud Run (FastAPI + PyTorch Backend)
+    |  https://crop-disease-api-1049249498032.us-central1.run.app
+    v
+Google Cloud Storage (Model Checkpoints)
+    |  gs://crop-disease-detection-1/
+    v
+Trained Models (.pth files)
+```
 
 ## Project Structure
 
 ```
 crop_disease_detection/
 │
-├── business_objective/           # PDF with project brief (gitignored)
-│   └── Project 2.pdf
+├── api/                          # FastAPI backend
+│   ├── main.py                   # FastAPI app with /health, /models, /predict, /explain
+│   ├── inference.py              # Model loading, prediction, GradCAM
+│   ├── Dockerfile                # Cloud Run container
+│   ├── requirements.txt          # API dependencies
+│   └── run_local.py              # Local dev server (port 8000)
 │
-├── configs/                      # YAML configuration files
-│   └── training_config.yaml      # Hyperparams, Vertex AI settings, augmentation
+├── frontend/                     # React web app
+│   ├── src/
+│   │   ├── App.jsx               # Main app with tabs, state, API polling
+│   │   ├── api.js                # Axios client (Cloud Run URL)
+│   │   └── components/
+│   │       ├── ImageUpload.jsx   # Drag-and-drop upload
+│   │       ├── ModelSelector.jsx # Model dropdown with F1 scores
+│   │       ├── ResultsPanel.jsx  # Diagnosis + GradCAM display
+│   │       ├── ComparePanel.jsx  # Side-by-side GradCAM comparison
+│   │       └── Header.jsx        # App header
+│   ├── vite.config.js            # Vite build config
+│   └── package.json
 │
-├── data/                         # Raw & processed datasets (gitignored)
-│   ├── original/                 # Unmodified PlantVillage download
-│   └── processed/                # Resized, split into train/val/test
-│
-├── models/
-│   └── saved/                    # Trained model weights (.pth files)
+├── configs/
+│   └── label_mapping.json        # 102-class label mapping
 │
 ├── notebook/
-│   └── crop_disease_detection.ipynb   # EDA, prototyping, experimentation
+│   └── crop_disease_detection.ipynb  # EDA, data prep, evaluation
 │
-├── reports/                      # Generated evaluation outputs
-│   └── .gitkeep                  # Confusion matrices, loss curves, reports
+├── scripts/
+│   ├── submit_vertex_job.py      # Launch Vertex AI training
+│   └── vertex_ai_training.py     # Cloud training script
 │
-├── scripts/                      # Standalone automation scripts
-│   ├── upload_to_gcs.py          # Push local data → GCS bucket
-│   └── submit_vertex_job.py      # Launch Vertex AI training job
+├── src/
+│   ├── model.py                  # 8 model architectures (CNN, ResNet, ViT, etc.)
+│   └── training/
+│       └── trainer.py            # Training loop with 5-fold CV
 │
-├── src/                          # Main source package
-│   ├── data/
-│   │   ├── dataset.py            # PyTorch Dataset class, data loaders
-│   │   ├── preprocessing.py      # Resize, normalize, color-space conversion
-│   │   └── augmentation.py       # Transforms (flips, rotations, color jitter)
-│   │
-│   ├── models/
-│   │   ├── custom_cnn.py         # Custom CNN architecture from scratch
-│   │   └── transfer_learning.py  # ResNet50 / EfficientNet / MobileNetV2
-│   │
-│   ├── training/
-│   │   ├── trainer.py            # Training loop, early stopping, checkpoints
-│   │   └── vertex_ai.py          # Vertex AI job submission & configuration
-│   │
-│   ├── evaluation/
-│   │   ├── metrics.py            # Accuracy, Precision, Recall, F1, confusion matrix
-│   │   └── visualize.py          # Loss curves, Grad-CAM, prediction grids
-│   │
-│   ├── inference/
-│   │   └── predict.py            # Load model → preprocess image → predict disease
-│   │
-│   └── utils/
-│       ├── config.py             # Load YAML config, default hyperparameters
-│       └── gcs_utils.py          # GCS upload/download helpers
+├── project_document/
+│   ├── PROJECT_DOCUMENT.md       # Complete project guide
+│   ├── android_app_deployment_guide.md
+│   ├── must_practice_topics.md
+│   └── vertex_ai_training_guide.md
 │
-├── .gitignore
-├── Dockerfile                    # Vertex AI custom training container
-├── README.md
-└── requirements.txt              # All Python dependencies
+├── .firebaserc                   # Firebase project alias
+├── firebase.json                 # Firebase Hosting config
+├── cloudbuild.yaml               # Cloud Build configuration
+├── env.yaml                      # Cloud Run environment variables
+├── Dockerfile                    # Vertex AI training container
+├── requirements.txt              # Python dependencies
+└── README.md
 ```
 
 ---
@@ -98,74 +111,127 @@ crop_disease_detection/
 
 | Component | Technology | Rationale |
 |---|---|---|
-| **Deep Learning** | PyTorch, torchvision | Specialized tensor operations, GPU acceleration, rich pre-trained model zoo |
-| **Image Processing** | OpenCV, Pillow, Albumentations | Industry-standard manipulation, resizing, and fast augmentation pipelines |
-| **Data Science** | NumPy, Pandas, scikit-learn | Array ops, tabular metrics logging, train/test splitting, classification reports |
-| **Visualization** | Matplotlib, Seaborn | Training curves, confusion matrix heatmaps, sample prediction grids |
-| **Cloud Training** | Google Vertex AI | On-demand GPU (T4/V100) for training large image datasets at scale |
-| **Storage** | Google Cloud Storage | Store PlantVillage dataset and model weights in GCS buckets |
-| **Experiment Tracking** | TensorBoard | Real-time training metric visualization, integrates with Vertex AI |
-| **Dataset** | PlantVillage | Open-source repository of ~55,000 labeled images of healthy and diseased crop leaves |
+| **Deep Learning** | PyTorch, torchvision | GPU acceleration, rich pre-trained model zoo |
+| **Explainability** | pytorch-grad-cam | GradCAM heatmaps for model interpretability |
+| **Backend** | FastAPI, Uvicorn | High-performance async API with auto-generated docs |
+| **Frontend** | React 19, Vite 8, TailwindCSS 4 | Modern, fast, responsive UI |
+| **Image Processing** | OpenCV, Pillow | Resize, normalize, color-space conversion |
+| **Data Science** | NumPy, Pandas, scikit-learn | Metrics, splitting, classification reports |
+| **Visualization** | Matplotlib, Seaborn | Training curves, confusion matrices |
+| **Cloud Training** | Google Vertex AI | On-demand GPU (T4/V100/A100) |
+| **Cloud Backend** | Google Cloud Run | Serverless, auto-scales to zero |
+| **Cloud Frontend** | Firebase Hosting | Free static hosting with CDN |
+| **Storage** | Google Cloud Storage | Dataset and model checkpoints |
+| **Experiment Tracking** | TensorBoard | Real-time metric visualization |
+| **Dataset** | PlantVillage + plant_dataset_2 | ~61,000 labeled images, 102 classes |
 
 ---
 
-## Four-Week Engineering Roadmap
+## Model Performance
 
-### Week 1 — Image Acquisition, EDA & Preprocessing
-- Download a subset of the PlantVillage dataset
-- Exploratory Data Analysis: plot sample images, analyze class distribution, check for imbalances
-- Build an automated preprocessing pipeline (resize to 224×224, normalize pixel arrays, train/val/test split)
+All models trained with ImageNet pretrained weights + custom classification heads.
 
-### Week 2 — Custom CNN Architecture & Baseline Training
-- Construct a custom CNN from scratch (Conv2D → BatchNorm → ReLU → MaxPool blocks)
-- Configure categorical cross-entropy loss and train the baseline model
-- Monitor training/validation loss curves; apply Dropout and Early Stopping to mitigate overfitting
+| Model | Type | Best Val F1 (macro) |
+|---|---|---|
+| CNN Baseline | Custom CNN | 0.8309 |
+| ResNet-50 | Transfer Learning | 0.9360 |
+| EfficientNet-B4 | Transfer Learning | 0.8942 |
+| VGG-16 | Transfer Learning | 0.8708 |
+| ViT (B/16) | Transfer Learning | 0.9177 |
+| **ResNet-152** | Transfer Learning | **0.9519** ⭐ |
+| MobileNet V3 | Transfer Learning | 0.9231 |
+| Swin-Base | Transfer Learning | 0.9271 |
 
-### Week 3 — Transfer Learning & Hyperparameter Optimization
-- Import pre-trained architectures (ResNet50 / MobileNetV2 / EfficientNet-B0)
-- Freeze base layers, fine-tune the classification head for crop diseases
-- Experiment with hyperparameter tuning (learning rates, batch sizes) — target accuracy **>90%**
+**Dataset:** 102 classes | 42,006 train | 19,167 test | 20 plant species
 
-### Week 4 — Evaluation, Inference & Deployment
-- Generate Confusion Matrix and per-class Classification Report
-- Save final model weights; write an inference script (image path → predicted disease + confidence)
-- Full repository documentation with commit history showing iterative architecture improvements
+## Features
+
+- **Multi-model inference** — select from 8 trained models
+- **GradCAM explainability** — visual heatmaps showing model attention
+- **Side-by-side comparison** — compare GradCAM across 2-3 models simultaneously
+- **Cold-start handling** — frontend polls backend and shows loading state
+- **Scale-to-zero backend** — Cloud Run costs minimized when idle
+- **Rate limiting** — 30/min predict, 10/min explain
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Check if models are loaded |
+| `/models` | GET | List available models with F1 scores |
+| `/predict` | POST | Upload image + model → prediction + confidence |
+| `/explain` | POST | Upload image + model → GradCAM heatmap (base64) |
+
+See full API docs at: [https://crop-disease-api-1049249498032.us-central1.run.app/docs](https://crop-disease-api-1049249498032.us-central1.run.app/docs)
 
 ---
 
-## Getting Started
+## Quick Start
 
-### Prerequisites
-- Python 3.10+
-- A GCP project with Vertex AI API and Cloud Storage API enabled
-- `gcloud` CLI authenticated
-- Docker (for Vertex AI container builds)
+### Use the Live App (No Setup)
 
-### Installation
+1. Open [https://crop-disease-detection-30ba1.web.app](https://crop-disease-detection-30ba1.web.app)
+2. Upload a leaf image
+3. Select a model from the dropdown
+4. Click **Predict** → get diagnosis + confidence
+5. Click **Explain GradCAM** → see heatmap
+6. Switch to **Compare Models** → compare 2-3 models side-by-side
+
+> **Note:** First prediction after idle may take 30-60s (Cloud Run cold start).
+
+### Local Development
+
+#### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- `gcloud` CLI (for deployment)
+
+#### Backend (FastAPI)
+```cmd
+cd api
+python -m run_local
+```
+Swagger docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+Test endpoints:
 ```bash
-# Clone the repository
-git clone <repo-url>
-cd crop_disease_detection
+curl http://localhost:8000/health
+curl http://localhost:8000/models
+curl -X POST http://localhost:8000/predict -F "image=@test.jpg" -F "model_name=resnet_152"
+curl -X POST http://localhost:8000/explain -F "image=@test.jpg" -F "model_name=resnet_152"
+```
 
-# Create virtual environment
-python -m venv .venv
-.venv\Scripts\activate        # Windows
+#### Frontend (React)
+```cmd
+cd frontend
+npm install
+npm run dev
+```
+Open the URL Vite prints (usually `http://localhost:5173/`).
 
-# Install dependencies
-pip install -r requirements.txt
+#### Deploy Frontend Updates
+```cmd
+cd frontend
+npm run build
+cd ..
+firebase deploy
+```
+
+#### Deploy Backend Updates
+```cmd
+gcloud builds submit \
+    --tag us-central1-docker.pkg.dev/crop-disease-detection-496608/crop-disease-api/crop-disease-api:latest \
+    --dockerfile api/Dockerfile \
+    --timeout=1800
+
+gcloud run deploy crop-disease-api \
+    --image us-central1-docker.pkg.dev/crop-disease-detection-496608/crop-disease-api/crop-disease-api:latest \
+    --region us-central1
 ```
 
 ### Training on Vertex AI
 ```bash
-# 1. Upload dataset to GCS
-python scripts/upload_to_gcs.py --bucket gs://your-bucket --source data/processed
-
-# 2. Build and push training container
-docker build -t crop-disease-training .
-docker tag crop-disease-training us-docker.pkg.dev/YOUR_PROJECT/repo/crop-disease-training
-docker push us-docker.pkg.dev/YOUR_PROJECT/repo/crop-disease-training
-
-# 3. Submit training job
+# Submit training job
 python scripts/submit_vertex_job.py --config configs/training_config.yaml
 ```
 

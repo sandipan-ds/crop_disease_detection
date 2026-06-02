@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "crop-disease-detection-496608"
-  }
+    "crop-disease-detection": "crop-disease-detection-30ba1"
+  },
+  "targets": {},
+  "etags": {}
 }
