@@ -83,6 +83,8 @@ models/
 # ─── GCS Service Key ───
 gcs_service_key/
 
+# Results folder — model checkpoints, GradCAM images, evaluation artifacts
+# (DVC-managed via results.dvc at project root; Git ignores folder contents)
 results/
 
 # ─── Frontend build artifacts ───
