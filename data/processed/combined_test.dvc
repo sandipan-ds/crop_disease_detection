@@ -1,0 +1,6 @@
+outs:
+- md5: 93df92484f0d55fc3dde5d05a98b4d1f.dir
+  size: 3597475030
+  nfiles: 19167
+  hash: md5
+  path: combined_test

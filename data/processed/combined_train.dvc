@@ -1,0 +1,6 @@
+outs:
+- md5: 05c6afb219fcb20fd7a4084faedd3678.dir
+  size: 7936239018
+  nfiles: 42006
+  hash: md5
+  path: combined_train

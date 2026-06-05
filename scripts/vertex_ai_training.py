@@ -18,6 +18,7 @@ Vertex AI runs this automatically via the job submission script.
 import os
 import sys
 import argparse
+from datetime import datetime
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -69,6 +70,12 @@ CONFIG = {
     # Augmentation
     "min_aug": 0,
     "max_aug": 5,
+
+    # --- Transformer fine-tuning (NEW) ---
+    "discriminative_lr": False,
+    "head_lr": 1e-3,
+    "backbone_lr": 1e-4,
+    "warmup_epochs": 0,
 }
 
 # GCS settings (loaded from env or defaults)
@@ -231,10 +238,34 @@ def main():
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     parser.add_argument("--folds", type=int, default=None,
                         help="(Legacy) Number of CV folds. Ignored in train-full mode.")
+    parser.add_argument("--discriminative-lr", action="store_true",
+                        help="Enable discriminative fine-tuning (head vs backbone LR)")
+    parser.add_argument("--head-lr", type=float, default=None,
+                        help="Learning rate for the classification head (requires --discriminative-lr)")
+    parser.add_argument("--backbone-lr", type=float, default=None,
+                        help="Learning rate for the backbone (requires --discriminative-lr)")
+    parser.add_argument("--warmup-epochs", type=int, default=None,
+                        help="Linear warmup epochs (critical for ViT/Swin stability)")
+    parser.add_argument("--dropout-fc", type=float, default=None,
+                        help="Override dropout rate for FC layers")
+    parser.add_argument("--run-name", type=str, default=None,
+                        help="Directory name for this run "
+                             "(default: {model}_{YYYYMMDD_HHMMSS}). "
+                             "Use to keep multiple runs of the same architecture, "
+                             "e.g. vit_v2, vit_hpo_warmup5")
     args = parser.parse_args()
 
     # Model name used in all paths
     model_name = args.model
+
+    # Run name used for filesystem + GCS paths (decoupled from architecture
+    # so re-running the same model does not overwrite prior checkpoints).
+    if args.run_name:
+        run_name = args.run_name
+    else:
+        run_name = f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    print(f"  Run name (paths/GCS): {run_name}")
 
     # Override config from args
     if args.epochs:
@@ -245,11 +276,28 @@ def main():
         CONFIG["learning_rate"] = args.lr
     if args.folds:
         CONFIG["n_folds"] = args.folds
+    if args.discriminative_lr:
+        CONFIG["discriminative_lr"] = True
+    if args.head_lr:
+        CONFIG["head_lr"] = args.head_lr
+    if args.backbone_lr:
+        CONFIG["backbone_lr"] = args.backbone_lr
+    if args.warmup_epochs is not None:
+        CONFIG["warmup_epochs"] = args.warmup_epochs
+    if args.dropout_fc:
+        CONFIG["dropout_fc"] = args.dropout_fc
 
     print("=" * 60)
     print(f"  VERTEX AI TRAINING — {model_name.upper()}")
+    print(f"  Run: {run_name}")
     print("  (Full train ~42K | Val ~9.5K | Test ~9.5K | class-balanced)")
     print("=" * 60)
+    if CONFIG.get("discriminative_lr"):
+        print(f"  Head LR:        {CONFIG['head_lr']}")
+        print(f"  Backbone LR:    {CONFIG['backbone_lr']}")
+    if CONFIG.get("warmup_epochs", 0) > 0:
+        print(f"  Warmup epochs:  {CONFIG['warmup_epochs']}")
+    print(f"  Dropout (FC):   {CONFIG['dropout_fc']}")
 
     # --- Device ---
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -261,23 +309,23 @@ def main():
     else:
         print("\n  WARNING: No GPU detected — training on CPU")
 
-    # --- Data directory setup (model_name in paths to avoid overwriting) ---
+    # --- Data directory setup (run_name in paths to avoid overwriting) ---
     if args.local_test:
         # Use local data paths
         data_root = str(PROJECT_ROOT)
-        train_csv = str(PROJECT_ROOT / "notebook" / "train.csv")
-        test_csv = str(PROJECT_ROOT / "notebook" / "test.csv")
-        log_dir = str(PROJECT_ROOT / "runs" / model_name)
-        save_dir = str(PROJECT_ROOT / "models" / "saved" / model_name)
+        train_csv = str(PROJECT_ROOT / "data" / "csv" / "train.csv")
+        test_csv = str(PROJECT_ROOT / "data" / "csv" / "test.csv")
+        log_dir = str(PROJECT_ROOT / "runs" / run_name)
+        save_dir = str(PROJECT_ROOT / "models" / "saved" / run_name)
     else:
         # On Vertex AI: download from GCS to /tmp
         data_root = "/tmp/crop_data"
         train_csv = f"{data_root}/train.csv"
         test_csv = f"{data_root}/test.csv"
 
-        # Use local dirs with model_name for actual I/O; upload to GCS separately
-        log_dir = f"/tmp/runs/{model_name}"
-        save_dir = f"/tmp/model_output/{model_name}"
+        # Use local dirs with run_name for actual I/O; upload to GCS separately
+        log_dir = f"/tmp/runs/{run_name}"
+        save_dir = f"/tmp/model_output/{run_name}"
 
         # Step 1: Download only the CSV manifests (lightweight)
         print(f"\n  Downloading CSV manifests from gs://{GCS_BUCKET}/{GCS_DATA_PREFIX}/")
@@ -378,7 +426,7 @@ def main():
     del model_temp
 
     # --- GCS checkpoint sync (crash recovery) ---
-    GCS_CHECKPOINT_PREFIX = f"checkpoints/{model_name}"
+    GCS_CHECKPOINT_PREFIX = f"checkpoints/{run_name}"
 
     def sync_checkpoints_to_gcs(file_paths):
         """Upload checkpoint files to GCS after each epoch (with timeout)."""
@@ -456,9 +504,9 @@ def main():
 
     # --- Upload final results to GCS (if on Vertex AI) ---
     if not args.local_test:
-        print(f"\n  Uploading final results to gs://{GCS_BUCKET}/results/{model_name}/")
-        upload_dir_to_gcs(save_dir, GCS_BUCKET, f"results/{model_name}/models")
-        upload_dir_to_gcs(log_dir, GCS_BUCKET, f"results/{model_name}/logs")
+        print(f"\n  Uploading final results to gs://{GCS_BUCKET}/results/{run_name}/")
+        upload_dir_to_gcs(save_dir, GCS_BUCKET, f"results/{run_name}/models")
+        upload_dir_to_gcs(log_dir, GCS_BUCKET, f"results/{run_name}/logs")
 
         # Clean up GCS checkpoints after successful completion
         print("  Cleaning up GCS checkpoints...")

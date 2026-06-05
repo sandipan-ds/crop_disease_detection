@@ -97,7 +97,6 @@ def _build_and_upload_package(project_root, bucket_name):
                     "google-cloud-storage>=2.10.0",
                     "Pillow>=10.0.0",
                     "tensorboard>=2.13.0",
-                    "python-json-logger>=2.0.0",
                     "pandas>=2.0.0",
                     "psutil>=5.9.0",
                 ],
@@ -152,6 +151,16 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--folds", type=int, default=1,
                         help="Number of CV folds (1=single split, 5=full CV)")
+    parser.add_argument("--discriminative-lr", action="store_true",
+                        help="Enable discriminative fine-tuning (head vs backbone LR)")
+    parser.add_argument("--head-lr", type=float, default=None,
+                        help="Learning rate for the classification head")
+    parser.add_argument("--backbone-lr", type=float, default=None,
+                        help="Learning rate for the backbone")
+    parser.add_argument("--warmup-epochs", type=int, default=None,
+                        help="Linear warmup epochs (critical for ViT/Swin stability)")
+    parser.add_argument("--dropout-fc", type=float, default=None,
+                        help="Override dropout rate for FC layers")
     parser.add_argument("--no-tensorboard", action="store_true",
                         help="Disable Vertex AI managed TensorBoard (logs still saved to GCS)")
     parser.add_argument("--timeout", type=int, default=86400,
@@ -182,6 +191,13 @@ def main():
     print(f"  Batch size:     {args.batch_size}")
     print(f"  Learning rate:  {args.lr}")
     print(f"  CV folds:       {args.folds} ({'single split' if args.folds == 1 else f'{args.folds}-fold CV'})")
+    if args.discriminative_lr:
+        print(f"  Head LR:        {args.head_lr or 1e-3}")
+        print(f"  Backbone LR:    {args.backbone_lr or 1e-4}")
+    if args.warmup_epochs:
+        print(f"  Warmup epochs:  {args.warmup_epochs}")
+    if args.dropout_fc:
+        print(f"  Dropout (FC):   {args.dropout_fc}")
     print(f"  GCS bucket:     gs://{BUCKET_NAME}/")
     print(f"  TensorBoard:    {'DISABLED' if args.no_tensorboard else ('enabled' if tensorboard else 'N/A')}")
     print(f"  Timeout:        {args.timeout}s ({args.timeout//3600}h)")
@@ -215,14 +231,26 @@ def main():
     print("  This may take 5-10 minutes to provision...")
     print("  Full training will take several hours.")
 
+    run_args = [
+        "--model", args.model,
+        "--epochs", str(args.epochs),
+        "--batch-size", str(args.batch_size),
+        "--lr", str(args.lr),
+        "--folds", str(args.folds),
+    ]
+    if args.discriminative_lr:
+        run_args.extend(["--discriminative-lr"])
+    if args.head_lr:
+        run_args.extend(["--head-lr", str(args.head_lr)])
+    if args.backbone_lr:
+        run_args.extend(["--backbone-lr", str(args.backbone_lr)])
+    if args.warmup_epochs is not None:
+        run_args.extend(["--warmup-epochs", str(args.warmup_epochs)])
+    if args.dropout_fc:
+        run_args.extend(["--dropout-fc", str(args.dropout_fc)])
+
     job.run(
-        args=[
-            "--model", args.model,
-            "--epochs", str(args.epochs),
-            "--batch-size", str(args.batch_size),
-            "--lr", str(args.lr),
-            "--folds", str(args.folds),
-        ],
+        args=run_args,
         environment_variables={
             "GCS_BUCKET_NAME": BUCKET_NAME,
         },

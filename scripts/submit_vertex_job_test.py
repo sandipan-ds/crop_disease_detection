@@ -97,7 +97,6 @@ def _build_and_upload_package(project_root, bucket_name):
                     "google-cloud-storage>=2.10.0",
                     "Pillow>=10.0.0",
                     "tensorboard>=2.13.0",
-                    "python-json-logger>=2.0.0",
                     "pandas>=2.0.0",
                     "psutil>=5.9.0",
                 ],

@@ -35,8 +35,8 @@ UPLOAD_DIRS = [
 ]
 
 UPLOAD_FILES = [
-    (PROJECT_ROOT / "notebook" / "train.csv",           "data/train.csv"),
-    (PROJECT_ROOT / "notebook" / "test.csv",            "data/test.csv"),
+    (PROJECT_ROOT / "data" / "csv" / "train.csv",       "data/train.csv"),
+    (PROJECT_ROOT / "data" / "csv" / "test.csv",        "data/test.csv"),
     (PROJECT_ROOT / "configs" / "label_mapping.json",   "configs/label_mapping.json"),
 ]
 

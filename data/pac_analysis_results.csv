@@ -1,0 +1,109 @@
+class_name,train_count,test_count,total_images,epsilon_bound_percent,keep_class
+Onion_Bulb Rot,5,2,7,60.74,False
+Onion_Downy mildew,29,8,37,25.22,False
+Cotton_Leaf_Variegation,92,24,116,14.16,False
+BlackGram_Leaf Crinckle,121,31,152,12.35,False
+Potato_Healthy,121,31,152,12.35,False
+BlackGram_Powdery Mildew,144,36,180,11.32,False
+Onion_Xanthomonas Leaf Blight,151,38,189,11.05,False
+Onion_Rust,170,43,213,10.42,False
+BlackGram_Healthy,176,45,221,10.24,False
+BlackGram_Yellow Mosaic,179,45,224,10.15,False
+Cotton_Leaf_Hopper_Jassids,180,45,225,10.12,False
+BlackGram_Anthracnose,184,46,230,10.01,False
+Wheat_Stem fly,187,47,234,9.93,True
+Ragi_Seedling,192,48,240,9.8,True
+Cotton_Bacterial_Blight,200,50,250,9.6,True
+Ragi_Mottle,203,51,254,9.53,True
+Ragi_Wilt,204,51,255,9.51,True
+Ragi_Smut,204,51,255,9.51,True
+Ragi_Downy,204,51,255,9.51,True
+Ragi_Healthy,204,51,255,9.51,True
+Cotton_Healthy,205,52,257,9.49,True
+Apple_Cedar_Apple_Rust,220,55,275,9.16,True
+Cotton_Herbicide_Growth_Damage,224,56,280,9.07,True
+Onion_Botrytis Leaf Blight,231,58,289,8.94,True
+Bean_Angular_leaf_spot,264,66,330,8.36,True
+Bean_Healthy,264,66,330,8.36,True
+Bean_Rust,264,66,330,8.36,True
+Peach_Healthy,288,72,360,8.0,True
+Tomato_Tomato_Mosaic_Virus,298,75,373,7.87,True
+Onion_Bulb_blight-D,315,79,394,7.65,True
+Pumpkin_Bacterial Leaf Spot,320,80,400,7.59,True
+Pumpkin_Mosaic Disease,320,80,400,7.59,True
+Pumpkin_Downy Mildew,320,80,400,7.59,True
+Pumpkin_Healthy Leaf,320,80,400,7.59,True
+Pumpkin_Powdery_Mildew,320,80,400,7.59,True
+Grape_Healthy,338,85,423,7.39,True
+Cotton_Curl_Virus,344,87,431,7.32,True
+Strawberry_Healthy,364,92,456,7.12,True
+Sugarcane_Mosaic,369,93,462,7.07,True
+Sugarcane_Yellow,404,101,505,6.76,True
+Onion_Virosis-D,409,103,512,6.72,True
+Corn_Cercospora_Leaf_Spot Gray_Leaf_Spot,410,103,513,6.71,True
+Sugarcane_Rust,411,103,514,6.7,True
+Sugarcane_RedRot,414,104,518,6.67,True
+Sugarcane_Healthy,417,105,522,6.65,True
+Orange_mealybugs disease,448,112,560,6.42,True
+Wheat_Black Rust,460,116,576,6.33,True
+Cotton_Leaf_Redding,462,116,578,6.32,True
+Wheat_Fusarium Head Blight,488,123,611,6.15,True
+Wheat_Common Root Rot,491,123,614,6.13,True
+Apple_Black_Rot,496,125,621,6.1,True
+Onion_Healthy leaves,500,300,3440,6.07,True
+Rice_Bacterial Leaf Blight,500,136,636,6.07,True
+Rice_Leaf_Blast,500,134,634,6.07,True
+Onion_Iris yellow virus_augment,500,300,1899,6.07,True
+Rice_Leaf_Scald,500,128,628,6.07,True
+Onion_Stemphylium Leaf Blight,500,300,1606,6.07,True
+Cucumber_Downy_mildew,500,300,1306,6.07,True
+Onion_Alternaria_D,500,300,830,6.07,True
+Onion_Purple blotch,500,300,847,6.07,True
+Onion_Fusarium-D,500,300,1276,6.07,True
+Cucumber_Powdery_mildew,500,300,1190,6.07,True
+Cucumber_Healthy_leaves,500,300,1235,6.07,True
+Onion_Caterpillar-P,500,300,1558,6.07,True
+Wheat_Mite,500,300,800,6.07,True
+Wheat_Mildew,500,300,1081,6.07,True
+Wheat_Leaf Blight,500,300,842,6.07,True
+Wheat_Healthy,500,300,1000,6.07,True
+Wheat_Blast,500,147,647,6.07,True
+Wheat_Brown Rust,500,300,1271,6.07,True
+Rice_Sheath Blight,500,132,632,6.07,True
+Wheat_Aphid,500,300,903,6.07,True
+Rice_Brown Spot,500,146,646,6.07,True
+Rice_Healthy,500,153,653,6.07,True
+Wheat_Yellow Rust,500,300,1301,6.07,True
+Apple_Healthy,500,300,1645,6.07,True
+Wheat_Tan spot,500,270,770,6.07,True
+Wheat_Smut,500,300,1310,6.07,True
+Cherry_Healthy,500,300,854,6.07,True
+Cherry_Powdery_Mildew,500,300,1052,6.07,True
+Grape_Black_Rot,500,300,1180,6.07,True
+Corn_Northern_Leaf_Blight,500,300,985,6.07,True
+Corn_Healthy,500,300,1162,6.07,True
+Corn_Common_Rust,500,300,1192,6.07,True
+Orange_foliage damaged,500,300,2100,6.07,True
+Orange_Haunglongbing_Citrus_Greening,500,300,5507,6.07,True
+Grape_Leaf_Blight_Isariopsis_Leaf_Spot,500,300,1076,6.07,True
+Grape_Esca_Black_Measles),500,300,1383,6.07,True
+Peach_Bacterial_Spot,500,300,2297,6.07,True
+Orange_Healthy,500,300,909,6.07,True
+PepperBell_Healthy,500,300,1478,6.07,True
+PepperBell_Bacterial_spot,500,300,997,6.07,True
+Potato_Early_Blight,500,300,1000,6.07,True
+Potato_Late_Blight,500,300,1000,6.07,True
+Apple_Apple_Scab,500,130,630,6.07,True
+Wheat_Septoria,500,300,1144,6.07,True
+Soybean_Healthy,500,300,5090,6.07,True
+Soybean_Diseased,500,300,1056,6.07,True
+Tomato_Bacterial_Spot,500,300,2127,6.07,True
+Strawberry_Leaf_Scorch,500,300,1109,6.07,True
+Tomato_Healthy,500,300,1591,6.07,True
+Tomato_Late_Blight,500,300,1909,6.07,True
+Tomato_Leaf_Mold,500,300,952,6.07,True
+Tomato_Early_Blight,500,300,1000,6.07,True
+Tomato_Septoria_Leaf_Spot,500,300,1771,6.07,True
+Tomato_Spider_Mites_Two_Spotted_Spider_Mite,500,300,1676,6.07,True
+Tomato_Target_Spot,500,300,1404,6.07,True
+Tomato_Tomato_Yellow_Leaf_Curl_Virus,500,300,5357,6.07,True
