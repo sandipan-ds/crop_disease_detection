@@ -2,7 +2,6 @@
 .env
 
 # ─── Data & project docs (too large / unnecessary for git) ───
-business_objective/
 project_document/
 
 # Raw source datasets — never commit, never DVC-track (too large / external)
@@ -104,8 +103,6 @@ env.yaml
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
-
-# ─── Docker build artifacts ───
 
 # ─── Caches ───
 *.cache/

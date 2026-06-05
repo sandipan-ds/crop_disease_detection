@@ -1,0 +1,30 @@
+# DVC pipeline for crop disease detection data preparation.
+# Stages: prepare — rename images, generate CSV manifests, build label_mapping.json
+# Usage: dvc repro          # run the full pipeline
+#        dvc repro prepare  # run only the prepare stage
+#
+# NOTE: This file is currently disabled (renamed to .bak) because we are
+# doing manual dvc add for existing data. Restore when you want pipeline
+# automation for new data (e.g. banana leaves).
+#
+# To restore: rename back to dvc.yaml, delete the manual .dvc files,
+# then run: dvc repro
+
+stages:
+  prepare:
+    cmd: >-
+      python scripts/prepare_data.py
+      --train-dir data/processed/combined_train
+      --test-dir data/processed/combined_test
+      --output-dir data/csv
+    deps:
+      - scripts/prepare_data.py
+      - data/processed/combined_train
+      - data/processed/combined_test
+    outs:
+      - data/csv/train.csv:
+          cache: true
+      - data/csv/test.csv:
+          cache: true
+      - configs/label_mapping.json:
+          cache: true

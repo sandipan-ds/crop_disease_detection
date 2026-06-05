@@ -107,6 +107,50 @@ def plot_confusion_matrix(targets, predictions, class_names, title="Confusion Ma
 
 
 # =========================================================
+# WARMUP SCHEDULER (wraps base scheduler with linear warmup)
+# =========================================================
+
+class WarmupScheduler:
+    """Linear warmup for N epochs, then delegate to base scheduler."""
+
+    def __init__(self, optimizer, warmup_epochs, base_scheduler):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.base_scheduler = base_scheduler
+        self.current_epoch = 0
+        self.warmup_done = False
+        # Store the target LR for each param group
+        self.base_lrs = [pg["lr"] for pg in optimizer.param_groups]
+
+    def step(self, *args, **kwargs):
+        self.current_epoch += 1
+        if self.current_epoch <= self.warmup_epochs:
+            # Linear warmup: lr = target_lr * (current_epoch / warmup_epochs)
+            for i, pg in enumerate(self.optimizer.param_groups):
+                warmup_lr = self.base_lrs[i] * (self.current_epoch / self.warmup_epochs)
+                pg["lr"] = warmup_lr
+        else:
+            if not self.warmup_done:
+                # Snap to exact target LR on first post-warmup epoch
+                for i, pg in enumerate(self.optimizer.param_groups):
+                    pg["lr"] = self.base_lrs[i]
+                self.warmup_done = True
+            self.base_scheduler.step(*args, **kwargs)
+
+    def state_dict(self):
+        return {
+            "current_epoch": self.current_epoch,
+            "warmup_done": self.warmup_done,
+            "base_scheduler": self.base_scheduler.state_dict(),
+        }
+
+    def load_state_dict(self, state_dict):
+        self.current_epoch = state_dict["current_epoch"]
+        self.warmup_done = state_dict["warmup_done"]
+        self.base_scheduler.load_state_dict(state_dict["base_scheduler"])
+
+
+# =========================================================
 # TRAINER
 # =========================================================
 
@@ -148,33 +192,81 @@ class Trainer:
             json.dump(self.config, f, indent=4)
         print(f"Hyperparameters saved: {hp_path}")
 
+    def _get_param_groups(self, model):
+        """Separate parameters into head vs backbone for discriminative LR."""
+        if not self.config.get("discriminative_lr", False):
+            return model.parameters()
+
+        head_patterns = [
+            "backbone.heads.head.",   # ViT
+            "backbone.head.",         # Swin
+            "backbone.fc.",           # ResNet
+            "backbone.classifier.",    # VGG, EfficientNet, MobileNet
+        ]
+        head_params = []
+        backbone_params = []
+
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if any(name.startswith(p) for p in head_patterns):
+                head_params.append(param)
+            else:
+                backbone_params.append(param)
+
+        groups = []
+        if head_params:
+            groups.append({
+                "params": head_params,
+                "lr": self.config.get("head_lr", self.config["learning_rate"]),
+                "weight_decay": self.config["weight_decay"],
+                "name": "head",
+            })
+        if backbone_params:
+            groups.append({
+                "params": backbone_params,
+                "lr": self.config.get("backbone_lr", self.config["learning_rate"]),
+                "weight_decay": self.config["weight_decay"],
+                "name": "backbone",
+            })
+        return groups
+
     def _build_optimizer(self, model):
-        """Build optimizer from config."""
+        """Build optimizer from config (supports discriminative LR)."""
+        param_groups = self._get_param_groups(model)
         return torch.optim.Adam(
-            model.parameters(),
+            param_groups,
             lr=self.config["learning_rate"],
             weight_decay=self.config["weight_decay"],
         )
 
     def _build_scheduler(self, optimizer):
-        """Build learning rate scheduler.
-        
+        """Build learning rate scheduler (supports warmup for transformers).
+
         Uses ReduceLROnPlateau when config["use_reduce_lr_on_plateau"] is True,
         otherwise falls back to CosineAnnealingLR.
+        If config["warmup_epochs"] > 0, wraps the base scheduler with
+        linear warmup (critical for ViT/Swin stability).
         """
         if self.config.get("use_reduce_lr_on_plateau", False):
-            return ReduceLROnPlateau(
+            base_scheduler = ReduceLROnPlateau(
                 optimizer,
                 mode="max",
                 factor=self.config.get("lr_factor", 0.5),
                 patience=self.config.get("lr_patience", 3),
                 min_lr=self.config.get("min_lr", 1e-6),
             )
-        return CosineAnnealingLR(
-            optimizer,
-            T_max=self.config["epochs"],
-            eta_min=self.config.get("min_lr", 1e-6),
-        )
+        else:
+            base_scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=self.config["epochs"],
+                eta_min=self.config.get("min_lr", 1e-6),
+            )
+
+        warmup_epochs = self.config.get("warmup_epochs", 0)
+        if warmup_epochs > 0:
+            return WarmupScheduler(optimizer, warmup_epochs, base_scheduler)
+        return base_scheduler
 
     def _train_one_epoch(self, model, dataloader, optimizer, criterion, epoch, writer, fold, transform=None):
         """Train for one epoch. Returns average loss, all targets, and all predictions."""
@@ -394,8 +486,8 @@ class Trainer:
             val_metrics = compute_metrics(val_targets, val_preds)
 
             # --- Learning rate step ---
-            current_lr = optimizer.param_groups[0]["lr"]
-            if isinstance(scheduler, ReduceLROnPlateau):
+            # Use config flag (not isinstance) because WarmupScheduler wraps the base scheduler
+            if self.config.get("use_reduce_lr_on_plateau", False):
                 scheduler.step(val_metrics["f1_macro"])
             else:
                 scheduler.step()
@@ -405,7 +497,10 @@ class Trainer:
             # --- Log to TensorBoard ---
             writer.add_scalar(f"loss/train", train_loss, epoch)
             writer.add_scalar(f"loss/val", val_loss, epoch)
-            writer.add_scalar(f"learning_rate", current_lr, epoch)
+            # Log per-group learning rates (supports discriminative LR)
+            for i, pg in enumerate(optimizer.param_groups):
+                group_name = pg.get("name", f"group_{i}")
+                writer.add_scalar(f"learning_rate/{group_name}", pg["lr"], epoch)
             writer.add_scalar(f"weight_decay", self.config["weight_decay"], epoch)
 
             # Log all train metrics
@@ -417,6 +512,7 @@ class Trainer:
                 writer.add_scalar(f"val/{metric_name}", metric_value, epoch)
 
             # --- Print epoch summary ---
+            current_lr = optimizer.param_groups[0]["lr"]
             print(f"\n  {'─'*90}")
             print(
                 f"  Epoch {epoch+1:>3}/{self.config['epochs']} | "
@@ -713,6 +809,19 @@ class Trainer:
         writer.add_figure("test/confusion_matrix", fig, 0)
         plt.close(fig)
 
+        # Save confusion matrix as standalone artifacts (PNG + raw NPY)
+        from pathlib import Path
+        cm_save_dir = Path(self.save_dir)
+        cm_save_dir.mkdir(parents=True, exist_ok=True)
+        cm_png_path = cm_save_dir / "test_confusion_matrix.png"
+        fig.savefig(cm_png_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        cm_raw = confusion_matrix(test_targets, test_preds)
+        cm_npy_path = cm_save_dir / "test_confusion_matrix.npy"
+        np.save(cm_npy_path, cm_raw)
+        print(f"  Confusion matrix saved: {cm_png_path}")
+        print(f"  Confusion matrix (raw): {cm_npy_path}")
+
         # Classification report (with overall accuracy and all summary metrics)
         report = classification_report(
             test_targets, test_preds,
@@ -746,5 +855,11 @@ class Trainer:
                 "model_used": str(model_path),
             }, f, indent=4)
         print(f"  Test results saved: {test_results_path}")
+
+        # Save classification report as plain text (alongside the TensorBoard log)
+        report_txt_path = Path(self.save_dir) / "test_classification_report.txt"
+        with open(report_txt_path, "w") as f:
+            f.write(full_report)
+        print(f"  Classification report saved: {report_txt_path}")
 
         return test_metrics

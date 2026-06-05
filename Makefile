@@ -17,20 +17,21 @@
 PYTHON := python
 DVC := dvc
 
-.PHONY: help prepare validate train test deploy dvc-push dvc-pull lint format clean
+.PHONY: help prepare validate train export-onnx test deploy dvc-push dvc-pull lint format clean
 
 help:
 	@echo "Available targets:"
-	@echo "  prepare    — run data preparation (rename images, generate CSVs)"
-	@echo "  validate   — validate CSV manifests and image paths"
-	@echo "  train      — submit a Vertex AI training job"
-	@echo "  test       — run backend test suite with pytest"
-	@echo "  deploy     — build Docker image and deploy to Cloud Run"
-	@echo "  dvc-push   — push DVC-tracked datasets to GCS remote"
-	@echo "  dvc-pull   — pull DVC-tracked datasets from GCS remote"
-	@echo "  lint       — run ruff / flake8 checks"
-	@echo "  format     — auto-format Python code with black / ruff"
-	@echo "  clean      — remove Python caches and temp files"
+	@echo "  prepare     — run data preparation (rename images, generate CSVs)"
+	@echo "  validate    — validate CSV manifests and image paths"
+	@echo "  train       — submit a Vertex AI training job"
+	@echo "  export-onnx — export trained model to ONNX for Android (default: mobilenet_v3)"
+	@echo "  test        — run backend test suite with pytest"
+	@echo "  deploy      — build Docker image and deploy to Cloud Run"
+	@echo "  dvc-push    — push DVC-tracked datasets to GCS remote"
+	@echo "  dvc-pull    — pull DVC-tracked datasets from GCS remote"
+	@echo "  lint        — run ruff / flake8 checks"
+	@echo "  format      — auto-format Python code with black / ruff"
+	@echo "  clean       — remove Python caches and temp files"
 
 # ---------------------------------------------------------
 # Data
@@ -55,6 +56,10 @@ validate:
 train:
 	@echo "Submitting training job to Vertex AI..."
 	$(PYTHON) scripts/submit_vertex_job.py --config configs/training_config.yaml
+
+export-onnx:
+	@echo "Exporting trained model to ONNX for Android (MobileNet V3, INT8, verified)..."
+	$(PYTHON) scripts/export_to_onnx.py --model mobilenet_v3 --quantize int8 --simplify --verify
 
 # ---------------------------------------------------------
 # Testing

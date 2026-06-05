@@ -143,10 +143,10 @@ crop_disease_detection/
 | **Cloud Backend** | Google Cloud Run | Serverless, auto-scales to zero |
 | **Cloud Frontend** | Firebase Hosting | Free static hosting with CDN |
 | **Storage** | Google Cloud Storage | Dataset and model checkpoints |
-| **Experiment Tracking** | TensorBoard | Real-time metric visualization |
+| **Experiment Tracking** | TensorBoard + `torch.utils.tensorboard.SummaryWriter` | Per-fold loss, accuracy, F1, LR, confusion matrices; CV summary logging |
 | **Data Versioning** | DVC + GCS | Reproducible datasets and model checkpoints |
 | **CI/CD** | GitHub Actions | Automated test, build, deploy on push |
-| **Dataset** | PlantVillage + plant_dataset_2 | ~61,000 labeled images, 102 classes |
+| **Dataset** | PlantVillage + plant_dataset_2 | 60,000+ labeled images, 102 classes, 20 plant species |
 
 ---
 
@@ -188,6 +188,50 @@ All models trained with ImageNet pretrained weights + custom classification head
 | `/explain` | POST | Upload image + model → GradCAM heatmap (base64) |
 
 See full API docs at: [https://crop-disease-api-1049249498032.us-central1.run.app/docs](https://crop-disease-api-1049249498032.us-central1.run.app/docs)
+
+---
+
+## Experiment Tracking with TensorBoard
+
+Training logs are written automatically by `src/trainer.py` using `torch.utils.tensorboard.SummaryWriter`.
+
+| Logged per fold | Logged per CV run | Logged for test set |
+|---|---|---|
+| `loss/train`, `loss/val` | `cv_mean/*`, `cv_std/*` | `test/loss`, `test/*_metrics` |
+| `train/accuracy`, `val/accuracy` | — | `test/confusion_matrix` |
+| `train/f1_macro`, `val/f1_macro` | — | `test/classification_report` |
+| `learning_rate`, `weight_decay` | — | — |
+| `confusion_matrix` (final) | — | — |
+| `hyperparameters` (text) | — | — |
+
+### View Vertex AI training logs (results/ folder)
+
+All 8 models were trained on Vertex AI. Logs are organized by model:
+
+```cmd
+cd "c:\Users\sandi\Desktop\ML Working Folder\crop_disease_detection"
+tensorboard --logdir results
+```
+
+Then open [http://localhost:6006](http://localhost:6006).
+
+You’ll see a dropdown for each model: `cnn_baseline`, `efficientnet_b4`, `mobilenet_v3`, `resnet_152`, `resnet_50`, `swin_base`, `vgg_16`, `vit`.
+
+> **Note:** Each model has `logs/fold_1/` (training curves) and `logs/test/` (final evaluation).
+
+### View one model only
+
+```cmd
+tensorboard --logdir results\resnet_152\logs
+```
+
+### View local training logs
+
+If you run `python scripts/local_training.py`:
+
+```cmd
+tensorboard --logdir runs\local
+```
 
 ---
 
@@ -263,6 +307,25 @@ make prepare
 # Validate manifests and image paths
 make validate
 ```
+
+### DVC — Data & Model Versioning
+
+All processed datasets, CSV manifests, and model checkpoints are tracked with DVC using a GCS remote:
+
+```cmd
+# Pull latest data / models
+dvc pull
+
+# Push after training a new fold
+dvc add data/processed data/csv models/saved
+
+dvc push
+```
+
+Remote configuration: `gs://crop-disease-detection-1/dvc_storage`
+
+See `dvc.yaml` for the pipeline stage definition.
+
 
 ### Training on Vertex AI
 
