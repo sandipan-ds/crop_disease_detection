@@ -1,0 +1,49 @@
+{
+  "os": "Windows-10-10.0.26200-SP0",
+  "python": "CPython 3.11.9",
+  "startedAt": "2026-06-10T08:56:03.102853Z",
+  "args": [
+    "--models",
+    "resnet_50",
+    "mobilenet_v3",
+    "resnet_152",
+    "vit",
+    "swin_base",
+    "--save-plots"
+  ],
+  "program": "C:\\Users\\sandi\\Desktop\\ML Working Folder\\crop_disease_detection\\scripts\\run_hypothesis_test.py",
+  "codePath": "scripts\\run_hypothesis_test.py",
+  "codePathLocal": "scripts\\run_hypothesis_test.py",
+  "git": {
+    "remote": "https://github.com/sandipan-ds/crop_disease_detection.git",
+    "commit": "11a02b42c6c95c0bc45c5b12e0afa32c9792478c"
+  },
+  "email": "sandipanarnab@gmail.com",
+  "root": "C:\\Users\\sandi\\Desktop\\ML Working Folder\\crop_disease_detection",
+  "host": "Legion-B",
+  "executable": "C:\\Users\\sandi\\Desktop\\ML Working Folder\\crop_disease_detection\\.venv\\Scripts\\python.exe",
+  "cpu_count": 8,
+  "cpu_count_logical": 16,
+  "gpu": "NVIDIA GeForce RTX 2060",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "1997512130560",
+      "used": "1730559930368"
+    }
+  },
+  "memory": {
+    "total": "25095901184"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 2060",
+      "memoryTotal": "6442450944",
+      "cudaCores": 1920,
+      "architecture": "Turing",
+      "uuid": "GPU-462811f2-25ac-4e4c-6761-91874123a972"
+    }
+  ],
+  "cudaVersion": "13.2",
+  "writerId": "r0gpd84mrma277b1cuspoeha6cyioqx0"
+}

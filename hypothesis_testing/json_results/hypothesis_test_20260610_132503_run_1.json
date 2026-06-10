@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "timestamp": "2026-06-10T13:25:03.720715",
+    "run_number": 1,
+    "test_set_size": 102,
+    "n_models": 2,
+    "n_comparisons": 1,
+    "bonferroni_alpha": 0.05,
+    "bootstrap_samples": 1000
+  },
+  "models_compared": [
+    "resnet_50",
+    "mobilenet_v3"
+  ],
+  "model_metrics": {
+    "resnet_50": {
+      "accuracy": 0.980392,
+      "f1_macro": 0.973856,
+      "f1_weighted": 0.973856,
+      "precision_macro": 0.970588,
+      "recall_macro": 0.980392
+    },
+    "mobilenet_v3": {
+      "accuracy": 0.941176,
+      "f1_macro": 0.921569,
+      "f1_weighted": 0.921569,
+      "precision_macro": 0.911765,
+      "recall_macro": 0.941176
+    }
+  },
+  "pairwise_comparisons": [
+    {
+      "model_a": "resnet_50",
+      "model_b": "mobilenet_v3",
+      "f1_a": 0.973856,
+      "f1_b": 0.921569,
+      "f1_difference": 0.052287,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 95,
+          "only_A_correct": 5,
+          "only_B_correct": 1,
+          "both_wrong": 1
+        },
+        "chi2_statistic": 1.5,
+        "p_value": 0.22067136191984704,
+        "disagreements": 6
+      },
+      "bootstrap": {
+        "mean_difference": 0.058899,
+        "ci_95_lower": 0.0,
+        "ci_95_upper": 0.115931,
+        "ci_excludes_zero": false
+      },
+      "significant": false
+    }
+  ],
+  "summary": {
+    "significant_pairs": 0,
+    "total_pairs": 1,
+    "ranking": [
+      {
+        "rank": 1,
+        "model": "resnet_50",
+        "f1_macro": 0.973856
+      },
+      {
+        "rank": 2,
+        "model": "mobilenet_v3",
+        "f1_macro": 0.921569
+      }
+    ]
+  }
+}

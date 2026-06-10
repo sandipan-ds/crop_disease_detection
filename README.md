@@ -339,6 +339,62 @@ python scripts/submit_vertex_job.py --config configs/training_config.yaml
 
 ---
 
+## Statistical Offline Evaluation (Hypothesis Testing)
+
+When comparing machine learning models, looking only at overall test accuracy can be misleading. For instance, if Model A gets $93.8\%$ accuracy and Model B gets $93.7\%$, is Model A genuinely smarter, or did it just get lucky on a few images? 
+
+To determine a scientific ranking, we performed a rigorous offline evaluation comparing 5 candidate models on our complete test set of **19,167 images** using two advanced statistical methods. Crucially, this evaluation runs directly on the checkpoints of **already trained models** without modifying their weights or retraining them.
+
+### 🔬 The Methodology
+
+#### 1. McNemar's Test (Granular Image-by-Image Comparison)
+Fundamentally, this test evaluates **whether two models agree** on their classification decisions. Instead of comparing overall summary percentages, it does an **image-by-image comparison**. 
+* For every single image in the 19,167 test set, it compares the models' predictions against the **true ground-truth labels** (the actual known diseases in the dataset). It records whether Model A's prediction matched the true label, and whether Model B's prediction matched the true label.
+* It groups the results to see where the models **agree** (both matched the true label, or both failed) and where they **disagree** (one model matched the true label, while the other failed).
+* **Null Hypothesis ($H_0$):** The models fundamentally agree, and their disagreements are symmetrical (i.e., if they disagree on 100 images, Model A matches the true label about 50 times and Model B matches it about 50 times). Any observed asymmetry is purely due to random chance.
+* **Alternative Hypothesis ($H_1$):** The models do not agree, and their disagreements are severely asymmetrical (one model consistently matches the true label during disagreements while the other fails).
+* By calculating the **p-value**, the test tells us whether the level of disagreement is statistically significant or if the models are essentially performing identically.
+
+#### 2. Bonferroni Correction & Alpha Threshold
+Normally in statistics, we look for a significance threshold (called **alpha** or $\alpha$) of $0.05$ (meaning there is less than a $5\%$ chance the result was due to luck). 
+However, when comparing 5 models, we have to run **10 separate pairwise matches**. If we run many matches, the chance of finding a "fake" pattern by luck increases. To correct for this, we use the **Bonferroni Correction**:
+$$\text{Corrected Alpha } (\alpha) = \frac{0.05}{10} = 0.0050$$
+A model is only declared a statistical winner if the probability of its victory being a fluke is **less than $0.5\%$** ($p < 0.005$).
+
+#### 3. Bootstrap Confidence Interval (Measuring Consistency)
+How do we know a model's performance is stable across different subsets of data?
+* We use **Bootstrap Resampling**: We randomly shuffle and rebuild our 19,167 test set **1,000 times** (allowing duplicate images) and recalculate the F1 score difference each time.
+* This generates a distribution of F1 differences. We then find the range where $95\%$ of the trials land (the **95% Confidence Interval**).
+* **The Rule:** If this interval contains `0` (e.g., the difference could be anywhere from $-0.5\%$ to $+0.3\%$), it means the models are statistically tied. If the interval excludes `0` completely, one model is a definitive winner.
+
+---
+
+### 🏆 Model Performance Summary & Rankings
+
+Our evaluation revealed that **8 out of the 10 pairwise matches** were statistically significant:
+
+1. **ResNet-152** ($F1=0.9493$, $Acc=0.9501$) — **The Absolute Champion**. It outperformed all other models and is statistically superior ($p < 10^{-12}$). The probability of its victory being due to luck is virtually zero.
+2. **ViT (B/16)** ($F1=0.9369$) and **ResNet-50** ($F1=0.9360$) — **Statistically Equivalent** ($p = 0.4824$). Despite ViT having a slightly higher score, the image-by-image difference is too small to declare a scientific winner.
+3. **Swin-Base** ($F1=0.9261$) and **MobileNet V3** ($F1=0.9219$) — **Statistically Equivalent** ($p = 0.00502$). While Swin-Base scored $0.42\%$ higher, it did not quite pass our strict corrected threshold of $0.0050$.
+
+---
+
+### 📈 Visualizations from the Full Test Run
+
+#### 1. Performance Rankings
+*This chart shows the macro F1-score and accuracy of all 5 candidate models side-by-side, sorted from best to worst.*
+![Model Performance Ranking](hypothesis_testing/model_ranking/plot_model_ranking_20260610_142624_run_2.png)
+
+#### 2. Pairwise McNemar's Test Heatmap
+*This heatmap displays the p-value for all 10 matchups. Green boxes indicate a statistically significant difference ($p < 0.005$), while red indicates a statistical tie.*
+![P-value Heatmap](hypothesis_testing/pvalue_heatmap/plot_pvalue_heatmap_20260610_142624_run_2.png)
+
+#### 3. Bootstrap F1-Difference Distributions
+*These histograms show the F1-score differences over 1,000 bootstrap runs. Shaded yellow regions show the 95% Confidence Interval. Notice that for ties (like resnet_50 vs vit), the distribution overlaps with the red dashed line (zero difference).*
+![Bootstrap Distributions](hypothesis_testing/bootstrap_distributions/plot_bootstrap_distributions_20260610_142624_run_2.png)
+
+---
+
 ## License
 
 This project is for educational and research purposes.
