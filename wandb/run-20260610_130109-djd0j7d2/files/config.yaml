@@ -1,0 +1,90 @@
+_wandb:
+    value:
+        cli_version: 0.27.0
+        e:
+            ji3s7mxsoyrlx2ecfpw1pg6pkfmjmn5x:
+                args:
+                    - --models
+                    - resnet_50
+                    - mobilenet_v3
+                    - resnet_152
+                    - vit
+                    - swin_base
+                    - --limit
+                    - "100"
+                codePath: scripts\run_hypothesis_test.py
+                codePathLocal: scripts\run_hypothesis_test.py
+                cpu_count: 8
+                cpu_count_logical: 16
+                cudaVersion: "13.2"
+                disk:
+                    /:
+                        total: "1997512130560"
+                        used: "1726033219584"
+                email: sandipanarnab@gmail.com
+                executable: C:\Users\sandi\Desktop\ML Working Folder\crop_disease_detection\.venv\Scripts\python.exe
+                git:
+                    commit: 11a02b42c6c95c0bc45c5b12e0afa32c9792478c
+                    remote: https://github.com/sandipan-ds/crop_disease_detection.git
+                gpu: NVIDIA GeForce RTX 2060
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Turing
+                      cudaCores: 1920
+                      memoryTotal: "6442450944"
+                      name: NVIDIA GeForce RTX 2060
+                      uuid: GPU-462811f2-25ac-4e4c-6761-91874123a972
+                host: Legion-B
+                memory:
+                    total: "25095901184"
+                os: Windows-10-10.0.26200-SP0
+                program: C:\Users\sandi\Desktop\ML Working Folder\crop_disease_detection\scripts\run_hypothesis_test.py
+                python: CPython 3.11.9
+                root: C:\Users\sandi\Desktop\ML Working Folder\crop_disease_detection
+                startedAt: "2026-06-10T07:31:09.295935Z"
+                writerId: ji3s7mxsoyrlx2ecfpw1pg6pkfmjmn5x
+        m: []
+        python_version: 3.11.9
+        t:
+            "1":
+                - 1
+                - 5
+                - 41
+                - 53
+            "2":
+                - 1
+                - 5
+                - 41
+                - 53
+            "3":
+                - 2
+                - 13
+                - 15
+                - 16
+                - 62
+            "4": 3.11.9
+            "5": 0.27.0
+            "8":
+                - 2
+                - 3
+            "10":
+                - 21
+            "12": 0.27.0
+            "13": windows-amd64
+bonferroni_alpha:
+    value: 0.005
+bootstrap_samples:
+    value: 1000
+models_compared:
+    value:
+        - resnet_50
+        - mobilenet_v3
+        - resnet_152
+        - vit
+        - swin_base
+n_comparisons:
+    value: 10
+n_models:
+    value: 5
+test_set_size:
+    value: 102

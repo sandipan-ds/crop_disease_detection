@@ -4,20 +4,23 @@ Crop Disease Detection — FastAPI Backend
 Endpoints:
     GET  /health       — Liveness check
     GET  /models       — List available models + metadata
-    POST /predict      — Single image prediction
-    POST /explain      — Prediction + GradCAM heatmap
+    POST /predict      — Single image prediction (supports A/B testing)
+    POST /explain      — Prediction + GradCAM heatmap (supports A/B testing)
 """
 
 import io
+import os
 import time
 import base64
+import random
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, File, Form, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -35,6 +38,12 @@ logger = logging.getLogger(__name__)
 CHECKPOINTS_DIR = "results"
 LABEL_MAPPING_PATH = "configs/label_mapping.json"
 MAX_IMAGE_SIZE_MB = 10
+
+# ─── A/B Testing Config ───
+AB_TEST_MODEL_A = "resnet_50"       # Control group
+AB_TEST_MODEL_B = "mobilenet_v3"    # Treatment group
+AB_TEST_SPLIT = 0.5                  # 50/50 split
+AB_TEST_WANDB_PROJECT = "crop-disease-detection"
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "bmp"}
 
 # ─── Rate Limiter ───
@@ -43,6 +52,10 @@ limiter = Limiter(key_func=get_remote_address)
 # ─── Inference Service (global) ───
 inference_service: InferenceService = None
 _load_error: str = None
+
+# ─── W&B A/B Test Run (lazy-initialized) ───
+_wandb_ab_run = None
+_wandb_lock = threading.Lock()
 
 
 def _load_models_bg():
@@ -141,6 +154,74 @@ async def read_image(file: UploadFile) -> Image.Image:
     return image
 
 
+def resolve_ab_test(model_name: str) -> tuple:
+    """
+    If model_name is 'ab_test', randomly select between Model A and Model B.
+
+    Returns:
+        (resolved_model_name, is_ab_test, ab_group)
+    """
+    if model_name == "ab_test":
+        if random.random() < AB_TEST_SPLIT:
+            return AB_TEST_MODEL_A, True, "control"
+        else:
+            return AB_TEST_MODEL_B, True, "treatment"
+    return model_name, False, None
+
+
+def log_ab_telemetry(
+    model_used: str,
+    ab_group: str,
+    prediction: str,
+    confidence: float,
+    latency_ms: float,
+):
+    """
+    Log A/B test telemetry to W&B in the background.
+    Called via FastAPI BackgroundTasks so it doesn't block the response.
+    """
+    global _wandb_ab_run
+    try:
+        import wandb
+
+        with _wandb_lock:
+            if _wandb_ab_run is None:
+                # Load .env for WANDB_API_KEY
+                env_file = Path(__file__).resolve().parent.parent / ".env"
+                if env_file.exists():
+                    with open(env_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith("#") and "=" in line:
+                                key, value = line.split("=", 1)
+                                os.environ.setdefault(key.strip(), value.strip())
+
+                _wandb_ab_run = wandb.init(
+                    project=AB_TEST_WANDB_PROJECT,
+                    name="online-ab-test",
+                    tags=["online-ab-test", "production"],
+                    job_type="online-ab-test",
+                    config={
+                        "model_a": AB_TEST_MODEL_A,
+                        "model_b": AB_TEST_MODEL_B,
+                        "split": AB_TEST_SPLIT,
+                    },
+                    resume="allow",
+                )
+
+        _wandb_ab_run.log({
+            "model_used": model_used,
+            "ab_group": ab_group,
+            "confidence": confidence,
+            "latency_ms": latency_ms,
+            f"latency/{model_used}": latency_ms,
+            f"confidence/{model_used}": confidence,
+        })
+
+    except Exception as e:
+        logger.warning(f"A/B telemetry logging failed: {e}")
+
+
 # ─── Endpoints ───
 
 @app.get("/health")
@@ -171,8 +252,9 @@ async def list_models():
 @limiter.limit("30/minute")
 async def predict(
     request: Request,
+    background_tasks: BackgroundTasks,
     image: UploadFile = File(..., description="Leaf image (JPEG/PNG)"),
-    model_name: str = Form(default="resnet_50", description="Model to use for prediction"),
+    model_name: str = Form(default="resnet_50", description="Model to use for prediction. Use 'ab_test' for A/B testing."),
     top_k: int = Form(default=5, description="Number of top predictions to return"),
 ):
     """
@@ -180,22 +262,26 @@ async def predict(
 
     - Upload an image of a crop leaf
     - Optionally specify which model to use
+    - Set model_name='ab_test' to enable A/B testing (random 50/50 split)
     - Returns predicted disease class with confidence scores
     """
     # Validate
     validate_image(image)
 
-    if model_name not in MODEL_METADATA:
+    # A/B test routing
+    resolved_model, is_ab_test, ab_group = resolve_ab_test(model_name)
+
+    if resolved_model not in MODEL_METADATA:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown model '{model_name}'. Available: {list(MODEL_METADATA.keys())}",
+            detail=f"Unknown model '{resolved_model}'. Available: {list(MODEL_METADATA.keys())}",
         )
 
     if not inference_service:
         detail = f"Service failed to start: {_load_error}" if _load_error else "Models are still downloading/loading from GCS. Please retry in 30-60s."
         raise HTTPException(status_code=503, detail=detail)
 
-    if inference_service and model_name not in inference_service.models:
+    if inference_service and resolved_model not in inference_service.models:
         loaded = list(inference_service.models.keys())
         if not loaded:
             raise HTTPException(
@@ -204,7 +290,7 @@ async def predict(
             )
         raise HTTPException(
             status_code=404,
-            detail=f"Model '{model_name}' checkpoint not available on this server.",
+            detail=f"Model '{resolved_model}' checkpoint not available on this server.",
         )
 
     # Read image
@@ -212,63 +298,85 @@ async def predict(
 
     # Predict
     start_time = time.time()
-    result = inference_service.predict(img, model_name=model_name, top_k=top_k)
+    result = inference_service.predict(img, model_name=resolved_model, top_k=top_k)
     latency_ms = (time.time() - start_time) * 1000
 
     # Log
+    ab_tag = f" | ab_test={ab_group}" if is_ab_test else ""
     logger.info(
         f"Prediction: {result['prediction']} ({result['confidence']:.2%}) "
-        f"| model={model_name} | latency={latency_ms:.0f}ms"
+        f"| model={resolved_model} | latency={latency_ms:.0f}ms{ab_tag}"
     )
 
-    return {
+    # Async W&B telemetry for A/B tests (does NOT block response)
+    if is_ab_test:
+        background_tasks.add_task(
+            log_ab_telemetry,
+            model_used=resolved_model,
+            ab_group=ab_group,
+            prediction=result["prediction"],
+            confidence=result["confidence"],
+            latency_ms=round(latency_ms, 1),
+        )
+
+    response = {
         **result,
         "latency_ms": round(latency_ms, 1),
     }
+    if is_ab_test:
+        response["ab_test"] = True
+        response["ab_group"] = ab_group
+
+    return response
 
 
 @app.post("/explain")
 @limiter.limit("10/minute")
 async def explain(
     request: Request,
+    background_tasks: BackgroundTasks,
     image: UploadFile = File(..., description="Leaf image (JPEG/PNG)"),
-    model_name: str = Form(default="resnet_50", description="Model to use"),
+    model_name: str = Form(default="resnet_50", description="Model to use. Use 'ab_test' for A/B testing."),
 ):
     """
     Predict + generate GradCAM heatmap overlay.
 
     Returns prediction results plus a base64-encoded heatmap image.
+    Set model_name='ab_test' to enable A/B testing.
     """
     from pytorch_grad_cam.utils.image import show_cam_on_image
 
     # Validate
     validate_image(image)
 
-    if model_name not in MODEL_METADATA:
-        raise HTTPException(status_code=400, detail=f"Unknown model '{model_name}'.")
+    # A/B test routing
+    resolved_model, is_ab_test, ab_group = resolve_ab_test(model_name)
+
+    if resolved_model not in MODEL_METADATA:
+        raise HTTPException(status_code=400, detail=f"Unknown model '{resolved_model}'.")
 
     if not inference_service:
         detail = f"Service failed to start: {_load_error}" if _load_error else "Models are still downloading/loading from GCS. Please retry in 30-60s."
         raise HTTPException(status_code=503, detail=detail)
 
-    if inference_service and model_name not in inference_service.models:
+    if inference_service and resolved_model not in inference_service.models:
         loaded = list(inference_service.models.keys())
         if not loaded:
             raise HTTPException(
                 status_code=503,
                 detail="Models are still downloading/loading from GCS. Please retry in 30-60s.",
             )
-        raise HTTPException(status_code=404, detail=f"Model '{model_name}' not available.")
+        raise HTTPException(status_code=404, detail=f"Model '{resolved_model}' not available.")
 
     # Read image
     img = await read_image(image)
 
     # Predict
     start_time = time.time()
-    result = inference_service.predict(img, model_name=model_name, top_k=5)
+    result = inference_service.predict(img, model_name=resolved_model, top_k=5)
 
     # GradCAM
-    grayscale_cam = inference_service.get_gradcam(img, model_name=model_name)
+    grayscale_cam = inference_service.get_gradcam(img, model_name=resolved_model)
     latency_ms = (time.time() - start_time) * 1000
 
     # Generate overlay image
@@ -291,16 +399,33 @@ async def explain(
         cam_pil.save(buffer, format="PNG")
         heatmap_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
+    ab_tag = f" | ab_test={ab_group}" if is_ab_test else ""
     logger.info(
         f"Explain: {result['prediction']} ({result['confidence']:.2%}) "
-        f"| model={model_name} | latency={latency_ms:.0f}ms"
+        f"| model={resolved_model} | latency={latency_ms:.0f}ms{ab_tag}"
     )
 
-    return {
+    # Async W&B telemetry for A/B tests
+    if is_ab_test:
+        background_tasks.add_task(
+            log_ab_telemetry,
+            model_used=resolved_model,
+            ab_group=ab_group,
+            prediction=result["prediction"],
+            confidence=result["confidence"],
+            latency_ms=round(latency_ms, 1),
+        )
+
+    response = {
         **result,
         "heatmap_base64": heatmap_b64,
         "latency_ms": round(latency_ms, 1),
     }
+    if is_ab_test:
+        response["ab_test"] = True
+        response["ab_group"] = ab_group
+
+    return response
 
 
 # ─── Error Handlers ───
