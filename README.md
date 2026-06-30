@@ -173,7 +173,7 @@ All models trained with ImageNet pretrained weights + custom classification head
 
 ## Features
 
-- **Multi-model inference** — select from 8 trained models
+- **Multi-model inference** — select from 5 live deployed models (*ResNet-50, MobileNetV3-Large, ResNet-152, ViT-B/16, Swin-Base*) out of 8 trained architectures
 - **GradCAM explainability** — visual heatmaps showing model attention
 - **Side-by-side comparison** — compare GradCAM across 2-3 models simultaneously
 - **Cold-start handling** — frontend polls backend and shows loading state
@@ -250,7 +250,7 @@ tensorboard --logdir runs\local
 5. Click **Explain GradCAM** → see heatmap
 6. Switch to **Compare Models** → compare 2-3 models side-by-side
 
-> **Note:** First prediction after idle may take 30-60s (Cloud Run cold start).
+> **Note:** First prediction after idle may take 45-60s (Cloud Run cold start) because the server dynamically downloads and loads all 5 model checkpoints from Google Cloud Storage on first boot.
 
 ### Local Development
 
@@ -291,15 +291,15 @@ firebase deploy
 ```
 
 #### Deploy Backend Updates
-```cmd
-gcloud builds submit \
-    --tag us-central1-docker.pkg.dev/crop-disease-detection-496608/crop-disease-api/crop-disease-api:latest \
-    --dockerfile api/Dockerfile \
-    --timeout=1800
+To deploy updates to Google Cloud Run, it is recommended to submit an isolated build context containing only the API and source code directories. This avoids packaging the 12.6 GiB local dataset, local checkpoints, and virtual environment.
 
-gcloud run deploy crop-disease-api \
-    --image us-central1-docker.pkg.dev/crop-disease-detection-496608/crop-disease-api/crop-disease-api:latest \
-    --region us-central1
+Run the following command in PowerShell:
+```cmd
+# Create isolated build context and submit to Cloud Build
+Remove-Item -Recurse -Force build_context -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path build_context; Copy-Item -Recurse api build_context/api; Copy-Item -Recurse src build_context/src; Copy-Item -Recurse configs build_context/configs; Copy-Item cloudbuild.yaml build_context/cloudbuild.yaml; gcloud builds submit --config=build_context/cloudbuild.yaml build_context; Remove-Item -Recurse -Force build_context
+
+# Deploy to Cloud Run
+gcloud run deploy crop-disease-api --image us-central1-docker.pkg.dev/crop-disease-detection-496608/crop-disease-api/crop-disease-api:latest --region us-central1
 ```
 
 ### Data Preparation (Automated)
@@ -408,15 +408,15 @@ Our evaluation revealed that **8 out of the 10 pairwise matches** were statistic
 
 #### 1. Performance Rankings
 *This chart shows the macro F1-score and accuracy of all 5 candidate models side-by-side, sorted from best to worst.*
-![Model Performance Ranking](hypothesis_testing/model_ranking/plot_model_ranking_20260610_142624_run_2.png)
+![Model Performance Ranking](hypothesis_testing/model_ranking/plot_model_ranking_20260701_012141_run_4.png)
 
 #### 2. Pairwise McNemar's Test Heatmap
 *This heatmap displays the p-value for all 10 matchups. Green boxes indicate a statistically significant difference ($p < 0.005$), while red indicates a statistical tie.*
-![P-value Heatmap](hypothesis_testing/pvalue_heatmap/plot_pvalue_heatmap_20260610_142624_run_2.png)
+![P-value Heatmap](hypothesis_testing/pvalue_heatmap/plot_pvalue_heatmap_20260701_012141_run_4.png)
 
 #### 3. Bootstrap F1-Difference Distributions
 *These histograms show the F1-score differences over 1,000 bootstrap runs. Shaded yellow regions show the 95% Confidence Interval. Notice that for ties (like resnet_50 vs vit), the distribution overlaps with the red dashed line (zero difference).*
-![Bootstrap Distributions](hypothesis_testing/bootstrap_distributions/plot_bootstrap_distributions_20260610_142624_run_2.png)
+![Bootstrap Distributions](hypothesis_testing/bootstrap_distributions/plot_bootstrap_distributions_20260701_012141_run_4.png)
 
 ---
 

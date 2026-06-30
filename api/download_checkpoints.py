@@ -19,7 +19,7 @@ from google.api_core.exceptions import NotFound
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "crop-disease-detection-1")
 MODELS_TO_DOWNLOAD = os.environ.get(
     "MODELS_TO_DOWNLOAD",
-    "resnet_50,mobilenet_v3"
+    "resnet_50,mobilenet_v3,resnet_152,vit,swin_base"
 ).split(",")
 
 LOCAL_RESULTS_DIR = Path(os.environ.get("CHECKPOINTS_DIR", "results"))

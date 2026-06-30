@@ -20,7 +20,7 @@ RUN mkdir -p /app/results
 EXPOSE 8080
 ENV PORT=8080
 ENV GCS_BUCKET=crop-disease-detection-1
-ENV MODELS_TO_DOWNLOAD=resnet_50,mobilenet_v3
+ENV MODELS_TO_DOWNLOAD=resnet_50,mobilenet_v3,resnet_152,vit,swin_base
 ENV CHECKPOINTS_DIR=results
 
 CMD uvicorn api.main:app --host 0.0.0.0 --port 8080 --workers 1

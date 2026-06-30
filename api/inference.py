@@ -44,7 +44,40 @@ MODEL_METADATA = {
         "params": "~5.4M",
         "speed": "fast",
     },
+    "resnet_152": {
+        "display_name": "ResNet-152",
+        "type": "Transfer Learning",
+        "params": "~60.2M",
+        "speed": "slow",
+    },
+    "vit": {
+        "display_name": "ViT-B/16",
+        "type": "Transfer Learning",
+        "params": "~86.6M",
+        "speed": "slow",
+    },
+    "swin_base": {
+        "display_name": "Swin-Base",
+        "type": "Transfer Learning",
+        "params": "~88.0M",
+        "speed": "slow",
+    },
 }
+
+
+def reshape_transform_vit(tensor, height=14, width=14):
+    """Reshape ViT encoder output: remove CLS token, reshape to spatial grid."""
+    result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
+    return result.permute(0, 3, 1, 2)
+
+
+def reshape_transform_swin(tensor, height=7, width=7):
+    """Reshape Swin Transformer output to spatial grid."""
+    if len(tensor.shape) == 4:
+        return tensor.permute(0, 3, 1, 2)
+    else:
+        result = tensor.reshape(tensor.size(0), height, width, tensor.size(2))
+        return result.permute(0, 3, 1, 2)
 
 
 class InferenceService:
@@ -208,10 +241,14 @@ class InferenceService:
     def _get_target_layer(self, model_name: str, model):
         """Get the appropriate target layer for GradCAM."""
         try:
-            if model_name == "resnet_50":
+            if model_name == "resnet_50" or model_name == "resnet_152":
                 return model.backbone.layer4[-1]
             elif model_name == "mobilenet_v3":
                 return model.backbone.features[-1]
+            elif model_name == "vit":
+                return model.backbone.encoder.layers[-1].ln_1
+            elif model_name == "swin_base":
+                return model.backbone.features[-1][-1].norm2
             else:
                 return None
         except Exception:
@@ -219,4 +256,8 @@ class InferenceService:
 
     def _get_reshape_transform(self, model_name: str):
         """Get reshape transform for transformer models."""
+        if model_name == "vit":
+            return reshape_transform_vit
+        elif model_name == "swin_base":
+            return reshape_transform_swin
         return None

@@ -1,0 +1,338 @@
+{
+  "metadata": {
+    "timestamp": "2026-07-01T01:21:41.885716",
+    "run_number": 4,
+    "test_set_size": 19167,
+    "n_models": 5,
+    "n_comparisons": 10,
+    "bonferroni_alpha": 0.005,
+    "bootstrap_samples": 1000
+  },
+  "models_compared": [
+    "resnet_50",
+    "mobilenet_v3",
+    "resnet_152",
+    "vit",
+    "swin_base"
+  ],
+  "model_metrics": {
+    "resnet_50": {
+      "accuracy": 0.937288,
+      "f1_macro": 0.936037,
+      "f1_weighted": 0.938283,
+      "precision_macro": 0.932519,
+      "recall_macro": 0.943741
+    },
+    "mobilenet_v3": {
+      "accuracy": 0.923984,
+      "f1_macro": 0.921942,
+      "f1_weighted": 0.924555,
+      "precision_macro": 0.918009,
+      "recall_macro": 0.931552
+    },
+    "resnet_152": {
+      "accuracy": 0.950123,
+      "f1_macro": 0.949316,
+      "f1_weighted": 0.950551,
+      "precision_macro": 0.945998,
+      "recall_macro": 0.954574
+    },
+    "vit": {
+      "accuracy": 0.93854,
+      "f1_macro": 0.936869,
+      "f1_weighted": 0.938784,
+      "precision_macro": 0.93152,
+      "recall_macro": 0.945618
+    },
+    "swin_base": {
+      "accuracy": 0.92941,
+      "f1_macro": 0.926099,
+      "f1_weighted": 0.929289,
+      "precision_macro": 0.919614,
+      "recall_macro": 0.937317
+    }
+  },
+  "pairwise_comparisons": [
+    {
+      "model_a": "resnet_50",
+      "model_b": "mobilenet_v3",
+      "f1_a": 0.936037,
+      "f1_b": 0.921942,
+      "f1_difference": 0.014095,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17263,
+          "only_A_correct": 702,
+          "only_B_correct": 447,
+          "both_wrong": 755
+        },
+        "chi2_statistic": 56.1497,
+        "p_value": 6.716849298982197e-14,
+        "disagreements": 1149
+      },
+      "bootstrap": {
+        "mean_difference": 0.01412,
+        "ci_95_lower": 0.010036,
+        "ci_95_upper": 0.018668,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "resnet_50",
+      "model_b": "resnet_152",
+      "f1_a": 0.936037,
+      "f1_b": 0.949316,
+      "f1_difference": -0.013279,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17631,
+          "only_A_correct": 334,
+          "only_B_correct": 580,
+          "both_wrong": 622
+        },
+        "chi2_statistic": 65.6729,
+        "p_value": 5.551115123125783e-16,
+        "disagreements": 914
+      },
+      "bootstrap": {
+        "mean_difference": -0.013291,
+        "ci_95_lower": -0.017135,
+        "ci_95_upper": -0.009429,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "resnet_50",
+      "model_b": "vit",
+      "f1_a": 0.936037,
+      "f1_b": 0.936869,
+      "f1_difference": -0.000832,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17441,
+          "only_A_correct": 524,
+          "only_B_correct": 548,
+          "both_wrong": 654
+        },
+        "chi2_statistic": 0.4935,
+        "p_value": 0.48238342045444504,
+        "disagreements": 1072
+      },
+      "bootstrap": {
+        "mean_difference": -0.000822,
+        "ci_95_lower": -0.005215,
+        "ci_95_upper": 0.003417,
+        "ci_excludes_zero": false
+      },
+      "significant": false
+    },
+    {
+      "model_a": "resnet_50",
+      "model_b": "swin_base",
+      "f1_a": 0.936037,
+      "f1_b": 0.926099,
+      "f1_difference": 0.009938,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17290,
+          "only_A_correct": 675,
+          "only_B_correct": 524,
+          "both_wrong": 678
+        },
+        "chi2_statistic": 18.7656,
+        "p_value": 1.4780634953415195e-05,
+        "disagreements": 1199
+      },
+      "bootstrap": {
+        "mean_difference": 0.01002,
+        "ci_95_lower": 0.005838,
+        "ci_95_upper": 0.014699,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "mobilenet_v3",
+      "model_b": "resnet_152",
+      "f1_a": 0.921942,
+      "f1_b": 0.949316,
+      "f1_difference": -0.027374,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17394,
+          "only_A_correct": 316,
+          "only_B_correct": 817,
+          "both_wrong": 640
+        },
+        "chi2_statistic": 220.6531,
+        "p_value": 0.0,
+        "disagreements": 1133
+      },
+      "bootstrap": {
+        "mean_difference": -0.027411,
+        "ci_95_lower": -0.031522,
+        "ci_95_upper": -0.023371,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "mobilenet_v3",
+      "model_b": "vit",
+      "f1_a": 0.921942,
+      "f1_b": 0.936869,
+      "f1_difference": -0.014927,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17254,
+          "only_A_correct": 456,
+          "only_B_correct": 735,
+          "both_wrong": 722
+        },
+        "chi2_statistic": 64.89,
+        "p_value": 7.771561172376096e-16,
+        "disagreements": 1191
+      },
+      "bootstrap": {
+        "mean_difference": -0.014942,
+        "ci_95_lower": -0.019257,
+        "ci_95_upper": -0.010989,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "mobilenet_v3",
+      "model_b": "swin_base",
+      "f1_a": 0.921942,
+      "f1_b": 0.926099,
+      "f1_difference": -0.004157,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17088,
+          "only_A_correct": 622,
+          "only_B_correct": 726,
+          "both_wrong": 731
+        },
+        "chi2_statistic": 7.8702,
+        "p_value": 0.005025670466411114,
+        "disagreements": 1348
+      },
+      "bootstrap": {
+        "mean_difference": -0.004099,
+        "ci_95_lower": -0.008768,
+        "ci_95_upper": 0.000528,
+        "ci_excludes_zero": false
+      },
+      "significant": false
+    },
+    {
+      "model_a": "resnet_152",
+      "model_b": "vit",
+      "f1_a": 0.949316,
+      "f1_b": 0.936869,
+      "f1_difference": 0.012447,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17626,
+          "only_A_correct": 585,
+          "only_B_correct": 363,
+          "both_wrong": 593
+        },
+        "chi2_statistic": 51.52,
+        "p_value": 7.086553566182374e-13,
+        "disagreements": 948
+      },
+      "bootstrap": {
+        "mean_difference": 0.012469,
+        "ci_95_lower": 0.008442,
+        "ci_95_upper": 0.01621,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "resnet_152",
+      "model_b": "swin_base",
+      "f1_a": 0.949316,
+      "f1_b": 0.926099,
+      "f1_difference": 0.023217,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17461,
+          "only_A_correct": 750,
+          "only_B_correct": 353,
+          "both_wrong": 603
+        },
+        "chi2_statistic": 142.1723,
+        "p_value": 0.0,
+        "disagreements": 1103
+      },
+      "bootstrap": {
+        "mean_difference": 0.023312,
+        "ci_95_lower": 0.018793,
+        "ci_95_upper": 0.027571,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    },
+    {
+      "model_a": "vit",
+      "model_b": "swin_base",
+      "f1_a": 0.936869,
+      "f1_b": 0.926099,
+      "f1_difference": 0.01077,
+      "mcnemar": {
+        "contingency_table": {
+          "both_correct": 17371,
+          "only_A_correct": 618,
+          "only_B_correct": 443,
+          "both_wrong": 735
+        },
+        "chi2_statistic": 28.5353,
+        "p_value": 9.20035994056434e-08,
+        "disagreements": 1061
+      },
+      "bootstrap": {
+        "mean_difference": 0.010842,
+        "ci_95_lower": 0.006946,
+        "ci_95_upper": 0.01498,
+        "ci_excludes_zero": true
+      },
+      "significant": true
+    }
+  ],
+  "summary": {
+    "significant_pairs": 8,
+    "total_pairs": 10,
+    "ranking": [
+      {
+        "rank": 1,
+        "model": "resnet_152",
+        "f1_macro": 0.949316
+      },
+      {
+        "rank": 2,
+        "model": "vit",
+        "f1_macro": 0.936869
+      },
+      {
+        "rank": 3,
+        "model": "resnet_50",
+        "f1_macro": 0.936037
+      },
+      {
+        "rank": 4,
+        "model": "swin_base",
+        "f1_macro": 0.926099
+      },
+      {
+        "rank": 5,
+        "model": "mobilenet_v3",
+        "f1_macro": 0.921942
+      }
+    ]
+  }
+}
